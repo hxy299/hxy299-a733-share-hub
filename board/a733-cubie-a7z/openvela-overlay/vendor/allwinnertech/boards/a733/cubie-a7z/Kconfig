@@ -1,0 +1,34 @@
+#
+# Radxa Cubie A7Z board configuration
+#
+
+if ARCH_BOARD_CUSTOM
+
+config BOARD_A7Z_SD_UBOOT_HANDOFF
+	bool
+	default y
+	---help---
+		Boot through the official SD-card Boot0, SCP, BL31 and U-Boot chain.
+		The firmware owns DDR/PMIC/clock initialization and transfers control
+		to the ARM64 Image at 0x40200000.
+
+config BOARD_A7Z_USER_LED
+	bool "Cubie A7Z blue user LED"
+	default y
+	select DEV_GPIO
+	depends on ARCH_BOARD_CUSTOM
+	---help---
+		Register the active-high PM2 blue user LED as /dev/userled.
+
+config BOARD_A7Z_STORAGE
+	bool "Cubie A7Z GPT and FAT data volume"
+	default y
+	depends on A733_SDMMC0
+	select GPT_PARTITION
+	select FS_FAT
+	---help---
+		Parse the SD-card GPT into stable A7Z partition nodes and mount only
+		the dedicated FAT data partition at /data.  Firmware and boot
+		partitions are never mounted automatically.
+
+endif
