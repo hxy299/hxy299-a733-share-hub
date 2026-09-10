@@ -78,15 +78,16 @@ mkdir -p ~/openvela-contest
 cd ~/openvela-contest
 
 repo init \
-  -u https://github.com/open-vela/contest2026_274_Dogking \
-  -b dev-ai-contest-2026 \
+  -u https://github.com/hxy299/openvela-hxy299-share-hub.git \
+  -b a733-cubie-a7z-share \
   -m contest2026_274_Dogking.xml
 repo sync -c -j8
 ```
 
-同步后，比赛仓库在 `contest2026_274_Dogking/`，其代码由 manifest 的
+同步后，公开协作仓库在 `contest2026_274_Dogking/`，其代码由 manifest 的
 `linkfile` 自动映射到外层 `vendor/`、`apps/` 和 `nuttx/`。开发者只应提交本
-比赛仓库；公共仓修改的长期合入方式见 `docs/UPSTREAM_PLAN.md`。
+协作仓库；公共仓修改的长期合入方式见 `docs/UPSTREAM_PLAN.md`。正式向组委会
+提交前，需要再切换回官方比赛仓库及其指定分支。
 
 ## 六、构建
 

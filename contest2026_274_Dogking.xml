@@ -8,7 +8,14 @@
   -->
   <include name="openvela.xml"/>
 
-  <project path="contest2026_274_Dogking" name="contest2026_274_Dogking">
+  <!-- Public collaboration repository.  Keep the checkout path stable so
+       existing build commands and linkfile destinations remain unchanged. -->
+  <remote name="dogking-share" fetch="https://github.com/"/>
+
+  <project path="contest2026_274_Dogking"
+           name="hxy299/openvela-hxy299-share-hub"
+           remote="dogking-share"
+           revision="a733-cubie-a7z-share">
     <!-- A733/Cubie A7Z board and chip implementation. -->
     <linkfile src="board/a733-cubie-a7z/openvela-overlay/vendor/allwinnertech/chips/a733"
               dest="vendor/allwinnertech/chips/a733"/>
