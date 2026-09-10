@@ -1,47 +1,46 @@
-# A733 / Radxa Cubie A7Z board port
+# A733 / 瑞莎 Cubie A7Z 板级适配
 
-This directory is the contest-owned source of the A733 board port.
-`contest2026_274_Dogking.xml` links its `openvela-overlay` contents into the
-normal openvela source tree.
+本目录是比赛仓库中由参赛者维护的 A733 板级适配源码。`contest2026_274_Dogking.xml`
+会把 `openvela-overlay` 下的内容映射到标准 openvela 工作树。
 
-## Hardware contract
+## 硬件约束
 
-- SoC: Allwinner A733, ARM64, 2× Cortex-A76 + 6× Cortex-A55
-- DRAM: 4 GiB LPDDR4/4X at physical `0x40000000`
-- openvela load/entry: `0x40200000`
-- BL31 reserved window: `0x48000000..0x48ffffff`
-- console: UART0 at `0x02500000`, GIC IRQ 34, 115200 8N1
-- GICv3: distributor `0x03400000`, redistributor `0x03460000`
-- boot storage: SDMMC0 at `0x04020000`, 4-bit microSD
-- wireless: FCU760K/AIC8800D80-U02 on dedicated USB1
-- NPU: Allwinner VIP2, hardware CID `0x1000003b`
-- current test board has no UFS device; UFS absence is non-blocking
+- SoC：全志 A733，ARM64，2× Cortex-A76 + 6× Cortex-A55
+- 内存：4 GiB LPDDR4/4X，物理地址从 `0x40000000` 开始
+- openvela 加载/入口地址：`0x40200000`
+- BL31 保留区域：`0x48000000..0x48ffffff`
+- 控制台：UART0，地址 `0x02500000`，GIC IRQ 34，115200 8N1
+- GICv3：分发器 `0x03400000`，重分发器 `0x03460000`
+- 启动存储：SDMMC0，地址 `0x04020000`，microSD 四线模式
+- 无线模块：FCU760K/AIC8800D80-U02，通过专用 USB1 连接
+- NPU：全志 VIP2，硬件 CID `0x1000003b`
+- 当前测试板未安装 UFS；UFS 缺失必须保持非阻塞
 
-## Overlay layout
+## 覆盖层结构
 
-- `vendor/allwinnertech/chips/a733`: chip boot, UART, SDMMC, Wi-Fi, NPU,
-  TRNG, THS, watchdog and USB-camera diagnostics.
-- `vendor/allwinnertech/boards/a733/cubie-a7z`: defconfig, linker script,
-  board bring-up, storage, GPIO and power control.
-- `apps/system/a733wifi`: interactive dual-band Wi-Fi manager.
-- `apps/system/a733services`: persistent optional service autostart.
-- `apps/system/a733ftpd`: FTP service wrapper.
-- other linked files: explicit compatibility deltas required by this port.
+- `vendor/allwinnertech/chips/a733`：芯片启动、UART、SDMMC、Wi-Fi、NPU、
+  TRNG、THS、看门狗和 USB 摄像头诊断。
+- `vendor/allwinnertech/boards/a733/cubie-a7z`：defconfig、链接脚本、板级
+  初始化、存储、GPIO 和电源控制。
+- `apps/system/a733wifi`：双频 Wi-Fi 交互命令。
+- `apps/system/a733services`：持久化的可选开机服务管理。
+- `apps/system/a733ftpd`：FTP 服务封装。
+- 其他映射文件：本板适配所需的、逐文件列出的兼容性修改。
 
-The authoritative feature set is:
+权威功能配置文件为：
 
 ```text
 openvela-overlay/vendor/allwinnertech/boards/a733/cubie-a7z/configs/nsh/defconfig
 ```
 
-## Boot boundary
+## 启动边界
 
-The port reuses the known-good vendor Boot0/SCP/BL31/U-Boot chain. The
-generated `nuttx.bin` starts with an ARM64 Image header and is entered through
-`booti`. This repository does not redistribute vendor boot firmware.
+本适配复用已经验证的厂商 Boot0/SCP/BL31/U-Boot 启动链。生成的
+`nuttx.bin` 带 ARM64 Image 头，通过 `booti` 进入；本仓库不重新分发厂商启动
+固件。
 
-## Completion boundary
+## 完成边界
 
-UART/NSH, memory, SD/GPT/FAT, basic peripherals, Wi-Fi/network services and
-VIP2 model execution are verified on real hardware. USB UVC, Bluetooth HCI,
-GPU and UFS are not complete and must not be represented as complete.
+UART/NSH、内存、SD/GPT/FAT、基础外设、Wi-Fi/网络服务和 VIP2 模型执行已经在
+真机验证。USB UVC、Bluetooth HCI、GPU 和 UFS 尚未完成，不能在外部材料中声称
+这些功能已经完成。

@@ -1,10 +1,10 @@
-# Real-board test evidence
+# 真实开发板测试证据
 
-Board: Radxa Cubie A7Z, Allwinner A733, 4 GiB RAM, microSD boot, no UFS.
+开发板：瑞莎 Cubie A7Z，全志 A733，4 GiB 内存，microSD 启动，无 UFS。
 
-## Boot and operating system
+## 启动与操作系统
 
-Observed successful boot boundary:
+观察到的成功启动边界：
 
 ```text
 - Boot from EL1
@@ -14,13 +14,12 @@ nsh> uname -a
 NuttX 0.0.0 ... arm64 cubie-a7z
 ```
 
-`free` reported about 4.27 GB of managed memory, procfs mounted, and `ps`
-showed the idle thread, high-priority work queue and NSH task.
+`free` 报告约 4.27 GB 的托管内存；procfs 已挂载；`ps` 显示空闲线程、
+高优先级工作队列和 NSH 任务。
 
 ## SD/GPT/FAT
 
-The following reads completed without I/O error after the SDMMC multi-block
-fix:
+修复 SDMMC 多块传输后，以下读取均无 I/O 错误：
 
 ```text
 dd if=/dev/mmcsd0 of=/dev/null bs=512 count=1
@@ -28,10 +27,9 @@ dd if=/dev/mmcsd0 of=/dev/null bs=16384 count=64
 dd if=/dev/mmcsd0 of=/dev/null bs=65536 count=16
 ```
 
-Board logs registered GPT entries and mounted `/dev/a7z-data` read/write at
-`/data`.
+开发板日志注册了 GPT 条目，并将 `/dev/a7z-data` 以读写方式挂载到 `/data`。
 
-## Temperature and board devices
+## 温度与开发板设备
 
 ```text
 sensortest -n 3 temp0
@@ -40,32 +38,31 @@ temp0: ... value:34.47
 temp0: ... value:34.47
 ```
 
-Verified device nodes include `/dev/userled`, `/dev/watchdog0`,
-`/dev/uorb/sensor_temp0`, `/dev/i2c2`, `/dev/i2c7`, `/dev/spi1`, `/dev/pwm0`,
-`/dev/mmcsd0`, `/dev/a733-wifi` and `/dev/npu0`.
+已验证的设备节点包括 `/dev/userled`、`/dev/watchdog0`、
+`/dev/uorb/sensor_temp0`、`/dev/i2c2`、`/dev/i2c7`、`/dev/spi1`、
+`/dev/pwm0`、`/dev/mmcsd0`、`/dev/a733-wifi` 和 `/dev/npu0`。
 
-## Wi-Fi and IPv4
+## Wi-Fi 与 IPv4
 
-The FCU760K completed firmware transition from VID:PID `a69c:8d80` to
-`a69c:8d81`. Both a 2.4 GHz BSS and a 5745 MHz 5 GHz BSS were scanned. The
-board associated with WPA2 and obtained `192.168.31.27/24` by DHCP in the test
-network. Network names and passwords are not part of this repository.
+FCU760K 已完成 VID:PID 从 `a69c:8d80` 到 `a69c:8d81` 的固件切换。扫描到
+2.4 GHz BSS 和 5745 MHz 5 GHz BSS。开发板通过 WPA2 关联，并在测试网络中
+由 DHCP 获取 `192.168.31.27/24`。网络名称和密码不在本仓库中。
 
-Functional tests passed for gateway ping, Internet IPv4 ping, DNS lookup,
-TCP, UDP, wget/curl, SSH and FTP. A representative local iperf run measured:
+网关 ping、互联网 IPv4 ping、DNS 查询、TCP、UDP、wget/curl、SSH 和 FTP
+功能测试均通过。一次有代表性的本地 iperf 测试结果：
 
-- TCP: 14.9 MiB in 30.25 s, 4.13 Mbit/s.
-- UDP: 38.9 MiB in 30.15 s, 10.8 Mbit/s, 5.7% loss.
+- TCP：30.25 秒传输 14.9 MiB，4.13 Mbit/s；
+- UDP：30.15 秒传输 38.9 MiB，10.8 Mbit/s，丢包 5.7%。
 
-FTP was exercised with small files, larger files and a PDF containing spaces
-and Chinese characters in its local path. SSH was exercised from Windows to
-remote NSH after host-key, ARP and socket-lifecycle fixes.
+FTP 测试覆盖小文件、大文件，以及本地路径中带空格和中文字符的 PDF。SSH
+测试从 Windows 发起并连接到远端 NSH，覆盖主机密钥、ARP 和 socket 生命周期
+修复后的行为。
 
-## VIP2 model execution
+## VIP2 模型执行
 
 ### LeNet
 
-Linux VIPLite reference:
+Linux VIPLite 参考结果：
 
 ```text
 hardware CID=1000003b
@@ -73,7 +70,7 @@ profile inference=164..178 us
 output[0] raw-crc32=d50f5d79
 ```
 
-openvela `/dev/npu0` produced the same CRC and 20-byte output:
+openvela `/dev/npu0` 产生相同 CRC 和 20 字节输出：
 
 ```text
 003c000000000000000000000000000000000000
@@ -81,8 +78,8 @@ openvela `/dev/npu0` produced the same CRC and 20-byte output:
 
 ### YOLOv5s
 
-The official A733 model with deterministic zero input produced three output
-CRCs on Linux and the same three CRCs on openvela:
+使用确定性全零输入的官方 A733 模型，在 Linux 与 openvela 上均得到三个相同
+的输出 CRC：
 
 ```text
 53127e9c  ddb5675e  6e01633e
@@ -90,21 +87,18 @@ CRCs on Linux and the same three CRCs on openvela:
 
 ### YOLOv8n PCQ
 
-Linux VIPLite reference reported 12,604 us inference for six outputs. The
-six golden CRC32 values were:
+Linux VIPLite 参考结果报告六路输出推理耗时 12,604 us。六个黄金 CRC32 为：
 
 ```text
 55d0becd ead06611 ba209c57 2637657c 9e7f743a 2eb4d5ce
 ```
 
-openvela matched all six for the embedded dog input. A dynamically supplied
-copy of the dog RGB input matched again. A black 640×640 RGB input changed the
-output CRCs and decoded zero detections while MMU/IRQ/guard checks remained
-clean.
+openvela 与内置 dog 输入的六路结果全部一致。动态提供一份 dog RGB 输入时
+再次一致。使用黑色 640×640 RGB 输入时，输出 CRC 改变且解码得到零个检测框，
+同时 MMU/IRQ/guard 检查保持干净。
 
-## Current UVC failure boundary
+## 当前 UVC 失败边界
 
-The latest diagnostic reads a valid xHCI capability block but xHCI HCRST does
-not clear after the vendor Combo PHY handoff has been disturbed. DWC3/app
-registers subsequently read zero. This is recorded as an in-progress driver
-issue, not a camera success.
+最新诊断可以读取有效的 xHCI 能力寄存器块，但在破坏厂商 Combo PHY 交接后，
+xHCI HCRST 无法清零；随后 DWC3/app 寄存器读取为零。这里记录的是正在处理的
+驱动问题，不应宣称摄像头已经成功。

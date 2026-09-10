@@ -1,27 +1,25 @@
-# openvela on Allwinner A733 / Radxa Cubie A7Z
+# openvela 在全志 A733 / 瑞莎 Cubie A7Z 上的适配
 
-This is the first-stage, SD-card-first ARM64 port.  It intentionally reuses
-the official Boot0, SCP, BL31 and U-Boot firmware from the known-good RadxaOS
-image.  UFS is not probed by openvela and is reserved for a later board
-configuration.
+这是第一阶段、以 SD 卡启动为主的 ARM64 适配。它有意复用瑞莎官方已验证的
+RadxaOS 镜像中的 Boot0、SCP、BL31 和 U-Boot 固件。openvela 当前不探测 UFS，
+UFS 启动留给后续板级配置。
 
-## Hardware contract
+## 硬件约束
 
-- DRAM: 4 GiB LPDDR4 at physical `0x40000000`
-- openvela Image load/entry: `0x40200000`
-- stage-1 RAM window: `0x40200000..0x47ffffff`
-- BL31 reserved: `0x48000000..0x48ffffff`
-- console: UART0, `0x02500000`, GIC IRQ 34, 115200 8N1
-- interrupt controller: GICv3, GICD `0x03400000`, GICR `0x03460000`
-- boot storage: SDMMC0, `0x04020000` (driver follows after the NSH baseline)
+- DRAM：4 GiB LPDDR4，物理地址 `0x40000000`
+- openvela Image 加载/入口：`0x40200000`
+- 第一阶段 RAM 窗口：`0x40200000..0x47ffffff`
+- BL31 保留区域：`0x48000000..0x48ffffff`
+- 控制台：UART0，`0x02500000`，GIC IRQ 34，115200 8N1
+- 中断控制器：GICv3，GICD `0x03400000`，GICR `0x03460000`
+- 启动存储：SDMMC0，`0x04020000`（驱动在 NSH 基线后继续实现）
 
-The produced `nuttx.bin` starts with a Linux ARM64 Image header.  This is
-required because the board's U-Boot is AArch32 and must use `booti`/BL31 to
-enter AArch64; `go 0x40200000` is not a valid boot method.
+生成的 `nuttx.bin` 带 Linux ARM64 Image 头。这是因为本板 U-Boot 为 AArch32，
+必须通过 `booti`/BL31 进入 AArch64；`go 0x40200000` 不是有效启动方法。
 
-## Build in WSL
+## 在 WSL 中构建
 
-From the `quickly-openvela` directory:
+从 `quickly-openvela` 目录执行：
 
 ```sh
 export PATH="$PWD/prebuilts/gcc/linux-x86_64/aarch64-none-elf/bin:\
@@ -35,23 +33,23 @@ $PWD/prebuilts/tools/ninja:\
   --cmake -b cmake_out/cubie-a7z_nsh -j8
 ```
 
-The SD boot file is (the verified local build used the `_py` directory while
-working around a stale failed CMake directory):
+此前验证过的构建因规避旧 CMake 目录，使用过 `_py` 目录；正常新构建应以实际
+输出目录为准：
 
 ```text
 cmake_out/cubie-a7z_nsh_py/nuttx.bin
 ```
 
-Copy it to `/boot/openvela/a733/Image` on the RadxaOS root filesystem and add
-the entry from `tools/extlinux-openvela.conf` to the existing
-`/boot/extlinux/extlinux.conf`.  Keep the Debian entry as the default recovery
-path until the openvela NSH baseline has passed.
+把它复制为 RadxaOS 根文件系统中的 `/boot/openvela/a733/Image`，并将
+`tools/extlinux-openvela.conf` 中的条目加入已有的
+`/boot/extlinux/extlinux.conf`。在 openvela NSH 基线通过前，保留 Debian 条目
+作为默认恢复路径。
 
-The expected first openvela-specific serial marker is:
+串口中预期首先出现的 openvela 标记为：
 
 ```text
 A7Z0
 ```
 
-It is followed by the NuttShell banner when GICv3, the virtual timer, MMU,
-heap and UART interrupt path are all functioning.
+随后应出现 NuttShell 横幅；这表明 GICv3、虚拟定时器、MMU、堆和 UART 中断路径
+均已正常工作。

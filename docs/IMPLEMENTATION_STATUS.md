@@ -1,78 +1,71 @@
-# A733 / Cubie A7Z implementation status
+# A733 / Cubie A7Z 适配状态
 
-Status date: 2026-09-10. “Passed” means observed on a real 4 GiB Cubie A7Z,
-not merely compiled.
+状态日期：2026-09-10。“已通过”表示已在真实的 4 GiB Cubie A7Z 上观察到，
+而不只是完成编译。
 
-## Verified system baseline
+## 已验证的系统基线
 
-- Boot0/SCP/BL31/U-Boot hands off to openvela at EL1 through `booti`.
-- AArch64 runtime, MMU, exceptions, GICv3 and virtual timer work.
-- UART0 provides early output and an interactive NSH console at 115200 8N1.
-- 4 GiB DRAM is exposed through split heap regions while preserving firmware
-  reservations.
-- procfs, `free`, `ps`, `uptime`, `dmesg`, signals and Ctrl+C work.
-- `poweroff` and `reboot` use the board/PSCI path.
+- Boot0/SCP/BL31/U-Boot 通过 `booti` 将控制权以 EL1 交给 openvela。
+- AArch64 运行时、MMU、异常、GICv3 和虚拟定时器正常。
+- UART0 提供早期输出，并在 115200 8N1 下提供可交互的 NSH 控制台。
+- 4 GiB DRAM 通过分区堆区域暴露，同时保留固件预留区域。
+- procfs、`free`、`ps`、`uptime`、`dmesg`、信号和 Ctrl+C 正常。
+- `poweroff` 和 `reboot` 使用开发板/PSCI 路径。
 
-## Verified storage and peripherals
+## 已验证的存储与外设
 
-- SDMMC0: PIO, 400 kHz initialization, 12 MHz transfer, 4-bit bus.
-- GPT partitions: firmware, EFI, openvela and data.
-- FAT data partition mounted read/write at `/data`, UTF-8 long file names.
-- User LED, watchdog, THS temperature sensor, I2C2/I2C7, SPI1 and fan PWM.
-- UFS is absent on the test board and is deliberately non-blocking.
+- SDMMC0：PIO，400 kHz 初始化，12 MHz 传输，4-bit 总线。
+- GPT 分区：firmware、EFI、openvela 和 data。
+- FAT 数据分区以读写方式挂载到 `/data`，支持 UTF-8 长文件名。
+- 用户 LED、watchdog、THS 温度传感器、I2C2/I2C7、SPI1 和风扇 PWM。
+- 测试板没有 UFS，并且 UFS 缺失被设计为非阻塞状态。
 
-## Verified FCU760K Wi-Fi and services
+## 已验证的 FCU760K Wi-Fi 与服务
 
-- Module: FCU760K / AIC8800D80-U02 over dedicated USB1 high-speed link.
-- BootROM `a69c:8d80`, runtime `a69c:8d81`.
-- Firmware upload, patch configuration, re-enumeration, LMAC/RF/ME/regulatory
-  setup and station VIF.
-- 2.4 GHz and 5 GHz active scan, WPA2-PSK/CCMP, DHCP, ARP, DNS, TCP/UDP.
-- Native `wifi` command, remembered-network reconnect, optional autostart.
-- SSH/SCP, FTP, curl/wget/HTTPS, NTP and iperf.
-- Board TRNG backs `/dev/random` and `/dev/urandom` for TLS/SSH.
-- Observed throughput baseline: TCP 4.13 Mbit/s; UDP 10.8 Mbit/s with 5.7%
-  loss in one 30-second test. This is a functional baseline, not a peak claim.
+- 模组：FCU760K / AIC8800D80-U02，通过专用 USB1 高速链路连接。
+- BootROM 标识 `a69c:8d80`，运行时标识 `a69c:8d81`。
+- 固件上传、补丁配置、重新枚举、LMAC/RF/ME/法规域设置和 station VIF。
+- 2.4 GHz 与 5 GHz 主动扫描、WPA2-PSK/CCMP、DHCP、ARP、DNS、TCP/UDP。
+- 原生 `wifi` 命令、记忆网络重连和可选的开机自启动。
+- SSH/SCP、FTP、curl/wget/HTTPS、NTP 和 iperf。
+- 板载 TRNG 为 `/dev/random` 和 `/dev/urandom` 提供 TLS/SSH 随机数。
+- 观测到的吞吐基线：TCP 4.13 Mbit/s；UDP 10.8 Mbit/s，单次 30 秒测试丢包
+  5.7%。这只是功能基线，不是峰值性能声明。
 
-## Verified VIP2 NPU
+## 已验证的 VIP2 NPU
 
-- Power/clock/reset, IRQ, DMA pool, MMU page tables, cache maintenance and
-  synchronous task ABI.
-- Hardware CID `0x1000003b`; runtime device `/dev/npu0`.
-- LeNet output CRC32 `d50f5d79`, byte prefix
-  `003c000000000000000000000000000000000000`, matching Linux VIPLite golden.
-- YOLOv5s three-output golden regression passed.
-- YOLOv8n PCQ six-output golden regression and dynamic 640×640 RGB input
-  passed. Dog input produces detections and black input does not, proving the
-  result is generated from the supplied input rather than replayed.
-- Current interchange path is authorized Linux VIPLite prepare/trace → A7PM
-  checked package → openvela executor. Generic proprietary NBG linking is not
-  implemented in openvela.
+- 电源/时钟/复位、IRQ、DMA 内存池、MMU 页表、缓存维护和同步任务 ABI。
+- 硬件 CID `0x1000003b`；运行时设备 `/dev/npu0`。
+- LeNet 输出 CRC32 `d50f5d79`，字节前缀
+  `003c000000000000000000000000000000000000`，与 Linux VIPLite 黄金结果一致。
+- YOLOv5s 三输出黄金回归通过。
+- YOLOv8n PCQ 六输出黄金回归和动态 640×640 RGB 输入通过。dog 输入有检测结果，
+  black 输入无检测结果，证明结果来自给定输入而不是回放固定输出。
+- 当前交换路径为：获得授权的 Linux VIPLite prepare/trace → 已核对的 A7PM 包 →
+  openvela 执行器。openvela 尚未实现通用专有 NBG 链接。
 
-## In progress: USB UVC camera
+## 进行中的 USB UVC 摄像头
 
-The current source contains the v65 diagnostic implementation. Type-C state,
-USB2 PHY and xHCI MMIO are visible, but the camera is not enumerated. Evidence
-shows that resetting xHCI/DWC3 destroys the vendor firmware’s Cadence Combo
-PHY/PIPE handoff, after which HCRST/CNR recovery times out.
+当前源码包含 v65 诊断实现。可以看到 Type-C 状态、USB2 PHY 和 xHCI MMIO，
+但摄像头尚未完成枚举。证据表明，复位 xHCI/DWC3 会破坏厂商固件完成的
+Cadence Combo PHY/PIPE 交接，之后 HCRST/CNR 恢复超时。
 
-Next implementation checkpoint:
+下一实现检查点：
 
-1. preserve the working firmware handoff;
-2. do not reset DWC3 or xHCI;
-3. construct DMA32 DCBAA, command ring, event ring and interrupter state;
-4. run controller and issue Enable Slot / Address Device;
-5. enumerate descriptors, implement UVC PROBE/COMMIT and acquire frames;
-6. convert/resize to RGB640, feed existing YOLOv8 dynamic input and emit
-   boxes/classes/scores.
+1. 保留当前可用的固件交接状态；
+2. 不再复位 DWC3 或 xHCI；
+3. 建立 DMA32 DCBAA、命令环、事件环和中断器状态；
+4. 启动控制器并发出 Enable Slot / Address Device；
+5. 枚举描述符，实现 UVC PROBE/COMMIT 并采集帧；
+6. 转换/缩放为 RGB640，送入现有 YOLOv8 动态输入并输出框、类别和分数。
 
-## Not complete
+## 尚未完成
 
-- Bluetooth HCI and profiles.
-- Imagination BXM GPU runtime.
-- UFS host/storage and UFS-first boot.
-- MIPI CSI IMX214 driver.
-- SMP/DVFS/power-management production hardening.
-- Generic on-openvela NBG compiler/linker.
+- Bluetooth HCI 和协议配置文件；
+- Imagination BXM GPU 运行时；
+- UFS 主机/存储和 UFS 优先启动；
+- MIPI CSI IMX214 驱动；
+- SMP/DVFS/电源管理的生产级加固；
+- openvela 内通用 NBG 编译器/链接器。
 
-These items are intentionally excluded from completed-feature claims.
+这些项目有意不计入已完成特性声明。

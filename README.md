@@ -53,7 +53,7 @@ contest2026_274_Dogking/
 │   │   ├── apps/system/a733wifi/                    # Wi-Fi 管理命令
 │   │   ├── apps/system/a733services/                # 自启动服务管理
 │   │   ├── apps/system/a733ftpd/                    # FTP 服务封装
-│   │   └── apps,nuttx 的必要兼容文件                # 逐文件 manifest 映射
+│   │   └── apps、nuttx 的必要兼容文件                # 逐文件 manifest 映射
 │   └── README.md                                    # 板级说明
 ├── docs/
 │   ├── IMPLEMENTATION_STATUS.md                     # 功能矩阵和边界
@@ -62,7 +62,7 @@ contest2026_274_Dogking/
 │   └── UPSTREAM_PLAN.md                             # 公共仓拆分计划
 ├── tools/build-a733.sh                              # WSL/Linux 构建入口
 ├── logs/                                            # 官方工具导出的真实 AI 日志
-├── contest2026_274_Dogking.xml                      # repo manifest 与 linkfile
+├── contest2026_274_Dogking.xml                      # 仓库 manifest 与 linkfile
 └── openvela.xml                                     # 大赛官方基线 manifest
 ```
 
@@ -247,6 +247,6 @@ AI 辅助的典型闭环：
 - [AI Coding 日志手册](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/ai_coding_log_guide.md)
 - [新硬件适配指引](https://github.com/open-vela/docs/blob/dev-ai-contest-2026/zh-cn/contest_2026/hardware_porting/hardware_porting_track_guide.md)
 
-## License
+## 许可证
 
 Apache-2.0。详见 [LICENSE](LICENSE)。
