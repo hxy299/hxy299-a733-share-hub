@@ -46,6 +46,7 @@ struct gguf_reader_s
 };
 
 extern int aipetllm_cxx_checkpoint(void);
+extern int aipetllm_ggml_quant_checkpoint(void);
 
 static const char *file_type(mode_t mode)
 {
@@ -584,6 +585,7 @@ static void usage(void)
   puts("  aipetllm info");
   puts("  aipetllm probe [MiB]");
   puts("  aipetllm cxxcheck");
+  puts("  aipetllm quantcheck");
   puts("  aipetllm pathcheck [model.gguf]");
   puts("  aipetllm readcheck [model.gguf]");
   puts("  aipetllm gguf [model.gguf]");
@@ -616,6 +618,11 @@ int main(int argc, char **argv)
   if (argc == 2 && strcmp(argv[1], "cxxcheck") == 0)
     {
       return aipetllm_cxx_checkpoint();
+    }
+
+  if (argc == 2 && strcmp(argv[1], "quantcheck") == 0)
+    {
+      return aipetllm_ggml_quant_checkpoint();
     }
 
   if ((argc == 2 || argc == 3) && strcmp(argv[1], "gguf") == 0)
