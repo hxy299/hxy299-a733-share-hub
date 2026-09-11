@@ -21,6 +21,7 @@
 #include <nuttx/crc32.h>
 #include <nuttx/fs/fs.h>
 #include <nuttx/irq.h>
+#include <nuttx/mutex.h>
 #include <nuttx/npu/a733_vip2.h>
 #include <nuttx/spinlock.h>
 
@@ -256,6 +257,7 @@ static bool g_rt_pages[A733_RT_POOL_PAGES];
 static volatile bool g_rt_cancel;
 static uint32_t g_rt_inflight;
 static struct a733_rt_state_s g_rt;
+static mutex_t g_rt_run_lock = NXMUTEX_INITIALIZER;
 
 static const uint32_t g_a733_rt_init_command[] =
 {
@@ -1715,6 +1717,98 @@ out:
   return ret;
 }
 
+static int a733_rt_run_a7pm(struct a733_npu_run_s *request)
+{
+  unsigned int count;
+  unsigned int i;
+  int ret;
+
+  if (request == NULL ||
+      (request->flags & ~A733_NPU_RUN_INPUT_FILE) != 0)
+    {
+      return -EINVAL;
+    }
+
+  ret = a733_rt_validate_path(request->package_path);
+  if (ret < 0)
+    {
+      request->status = ret;
+      return ret;
+    }
+
+  if ((request->flags & A733_NPU_RUN_INPUT_FILE) != 0)
+    {
+      ret = a733_rt_validate_path(request->input_path);
+      if (ret < 0)
+        {
+          request->status = ret;
+          return ret;
+        }
+    }
+
+  ret = nxmutex_lock(&g_rt_run_lock);
+  if (ret < 0)
+    {
+      request->status = ret;
+      return ret;
+    }
+
+  if ((request->flags & A733_NPU_RUN_INPUT_FILE) != 0)
+    {
+      strlcpy(g_rt.dynamic_input_path, request->input_path,
+              sizeof(g_rt.dynamic_input_path));
+      g_rt.dynamic_input_status = -EAGAIN;
+    }
+  else
+    {
+      g_rt.dynamic_input_path[0] = '\0';
+      g_rt.dynamic_input_crc = 0;
+      g_rt.dynamic_input_size = 0;
+      g_rt.dynamic_input_status = OK;
+    }
+
+  ret = a733_rt_prepared(request->package_path);
+  request->status = ret;
+  request->hardware_status = g_rt.prepared_hw_status;
+  request->irq_value = g_rt.prepared_hw.irq_value;
+  request->idle = g_rt.prepared_hw.idle;
+  request->polls = g_rt.prepared_hw.polls;
+  request->input_size = g_rt.dynamic_input_size;
+  request->input_crc32 = g_rt.dynamic_input_crc;
+  request->output_count = g_rt.prepared_outputs;
+  memcpy(request->output_crc32, g_rt.prepared_output_crc,
+         sizeof(request->output_crc32));
+  memcpy(request->output_changed, g_rt.prepared_output_changed,
+         sizeof(request->output_changed));
+  request->candidate_count = g_rt.yolo_candidates;
+  request->detection_count = g_rt.yolo_detections;
+
+  count = g_rt.yolo_detections;
+  if (count > A733_NPU_RUN_MAX_DETECTIONS)
+    {
+      count = A733_NPU_RUN_MAX_DETECTIONS;
+    }
+
+  memset(request->detections, 0, sizeof(request->detections));
+  for (i = 0; i < count; i++)
+    {
+      request->detections[i].x1_centi =
+        (int32_t)(g_rt.yolo[i].x1 * 100.0f + 0.5f);
+      request->detections[i].y1_centi =
+        (int32_t)(g_rt.yolo[i].y1 * 100.0f + 0.5f);
+      request->detections[i].x2_centi =
+        (int32_t)(g_rt.yolo[i].x2 * 100.0f + 0.5f);
+      request->detections[i].y2_centi =
+        (int32_t)(g_rt.yolo[i].y2 * 100.0f + 0.5f);
+      request->detections[i].score_milli =
+        (uint16_t)(g_rt.yolo[i].score * 1000.0f + 0.5f);
+      request->detections[i].class_id = g_rt.yolo[i].class_id;
+    }
+
+  nxmutex_unlock(&g_rt_run_lock);
+  return ret;
+}
+
 static int a733_rt_lenet(void)
 {
   static const uint8_t golden[A733_RT_LENET_OUTPUT_SIZE] =
@@ -2328,6 +2422,7 @@ static int a733_rt_ioctl(struct file *filep, int cmd, unsigned long arg)
   struct a733_npu_sync_s *sync;
   struct a733_npu_model_probe_s *model;
   struct a733_npu_stage_file_s *stage;
+  struct a733_npu_run_s *run;
   irqstate_t flags;
 
   if (context == NULL || !context->active)
@@ -2419,6 +2514,10 @@ static int a733_rt_ioctl(struct file *filep, int cmd, unsigned long arg)
       case A733_NPUIOC_STAGE_FILE:
         stage = (struct a733_npu_stage_file_s *)(uintptr_t)arg;
         return a733_rt_stage_file(stage);
+
+      case A733_NPUIOC_RUN_A7PM:
+        run = (struct a733_npu_run_s *)(uintptr_t)arg;
+        return a733_rt_run_a7pm(run);
 
       default:
         break;

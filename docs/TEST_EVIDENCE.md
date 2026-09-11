@@ -97,6 +97,21 @@ openvela 与内置 dog 输入的六路结果全部一致。动态提供一份 do
 再次一致。使用黑色 640×640 RGB 输入时，输出 CRC 改变且解码得到零个检测框，
 同时 MMU/IRQ/guard 检查保持干净。
 
+## NPU ABI v4 构建检查点
+
+2026-09-11 在当前 WSL openvela 环境中完成全量 AArch64 CMake 构建。驱动中的
+`A733_NPUIOC_RUN_A7PM` 与原生 `npu` 应用均完成编译和最终链接，`System.map`
+包含 `npu_main`。本次待刷写镜像为：
+
+```text
+cmake_out/cubie-a7z_nsh_npu/nuttx.bin
+size:   1586024 bytes
+sha256: bfc3d482d579f6c633af81ab5e002bdb9bcaa324b259719c155223ca396893be
+```
+
+首次配置时显式使用 `/usr/bin/python3`；WSL 的全局 `python` 仍保持原状。板端
+回归命令和期望值见本次交付说明，未刷写前不把此 ABI 标记为硬件验证通过。
+
 ## 当前 UVC 失败边界
 
 最新诊断可以读取有效的 xHCI 能力寄存器块，但在破坏厂商 Combo PHY 交接后，

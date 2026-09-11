@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <nuttx/fs/ioctl.h>
 
-#define A733_NPU_ABI_VERSION       3u
+#define A733_NPU_ABI_VERSION       4u
 #define A733_NPU_BUFFER_READ       (1u << 0)
 #define A733_NPU_BUFFER_WRITE      (1u << 1)
 #define A733_NPU_BUFFER_COMMAND    (1u << 2)
@@ -23,6 +23,9 @@
 #define A733_NPU_A733_CID          UINT32_C(0x1000003b)
 #define A733_NPU_STAGE_MODEL       1u
 #define A733_NPU_STAGE_INPUT       2u
+#define A733_NPU_RUN_INPUT_FILE    (1u << 0)
+#define A733_NPU_RUN_MAX_OUTPUTS   8u
+#define A733_NPU_RUN_MAX_DETECTIONS 32u
 
 struct a733_npu_info_s
 {
@@ -119,6 +122,42 @@ struct a733_npu_stage_file_s
   int32_t status;
 };
 
+/* Execute one checked A7PM package as a single operation.  When
+ * A733_NPU_RUN_INPUT_FILE is set, input_path replaces the package's single
+ * declared input.  Otherwise the input captured in the package is used.
+ * Integer coordinates avoid exposing the kernel floating-point ABI.
+ */
+
+struct a733_npu_detection_s
+{
+  int32_t x1_centi;
+  int32_t y1_centi;
+  int32_t x2_centi;
+  int32_t y2_centi;
+  uint16_t score_milli;
+  uint16_t class_id;
+};
+
+struct a733_npu_run_s
+{
+  char package_path[A733_NPU_MODEL_PATH_MAX];
+  char input_path[A733_NPU_MODEL_PATH_MAX];
+  uint32_t flags;
+  int32_t status;
+  int32_t hardware_status;
+  uint32_t irq_value;
+  uint32_t idle;
+  uint32_t polls;
+  uint32_t input_size;
+  uint32_t input_crc32;
+  uint32_t output_count;
+  uint32_t output_crc32[A733_NPU_RUN_MAX_OUTPUTS];
+  uint32_t output_changed[A733_NPU_RUN_MAX_OUTPUTS];
+  uint32_t candidate_count;
+  uint32_t detection_count;
+  struct a733_npu_detection_s detections[A733_NPU_RUN_MAX_DETECTIONS];
+};
+
 #define A733_NPUIOC_GET_INFO       _DIOC(0xe0)
 #define A733_NPUIOC_ALLOC          _DIOC(0xe1)
 #define A733_NPUIOC_FREE           _DIOC(0xe2)
@@ -131,5 +170,6 @@ struct a733_npu_stage_file_s
 #define A733_NPUIOC_SELFTEST       _DIOC(0xe9)
 #define A733_NPUIOC_MODEL_PROBE    _DIOC(0xea)
 #define A733_NPUIOC_STAGE_FILE     _DIOC(0xeb)
+#define A733_NPUIOC_RUN_A7PM       _DIOC(0xec)
 
 #endif
