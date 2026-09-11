@@ -1,0 +1,453 @@
+/****************************************************************************
+ * apps/system/aipetllm/aipetllm_main.c
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ ****************************************************************************/
+
+#include <nuttx/config.h>
+
+#include <errno.h>
+#include <inttypes.h>
+#include <limits.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#define GGUF_MAGIC UINT32_C(0x46554747)
+#define GGUF_TYPE_UINT8 0
+#define GGUF_TYPE_INT8 1
+#define GGUF_TYPE_UINT16 2
+#define GGUF_TYPE_INT16 3
+#define GGUF_TYPE_UINT32 4
+#define GGUF_TYPE_INT32 5
+#define GGUF_TYPE_FLOAT32 6
+#define GGUF_TYPE_BOOL 7
+#define GGUF_TYPE_STRING 8
+#define GGUF_TYPE_ARRAY 9
+#define GGUF_TYPE_UINT64 10
+#define GGUF_TYPE_INT64 11
+#define GGUF_TYPE_FLOAT64 12
+
+#define MODEL_DEFAULT CONFIG_AIPETLLM_DEFAULT_MODEL
+#define MODEL_KEY_LIMIT 256
+#define MODEL_VALUE_LIMIT 512
+#define PROBE_CHUNK (16 * 1024 * 1024)
+
+struct gguf_reader_s
+{
+  FILE *stream;
+  uint32_t version;
+  uint64_t tensors;
+  uint64_t metadata;
+};
+
+static int read_exact(FILE *stream, void *buffer, size_t length)
+{
+  return fread(buffer, 1, length, stream) == length ? 0 : -EIO;
+}
+
+static int skip_exact(FILE *stream, uint64_t length)
+{
+  while (length != 0)
+    {
+      long step = length > (uint64_t)LONG_MAX ? LONG_MAX : (long)length;
+      if (fseek(stream, step, SEEK_CUR) != 0)
+        {
+          return -errno;
+        }
+
+      length -= (uint64_t)step;
+    }
+
+  return 0;
+}
+
+static int read_string(FILE *stream, char *value, size_t capacity,
+                       uint64_t *full_length)
+{
+  uint64_t length;
+  size_t keep;
+
+  if (read_exact(stream, &length, sizeof(length)) < 0)
+    {
+      return -EIO;
+    }
+
+  if (full_length != NULL)
+    {
+      *full_length = length;
+    }
+
+  keep = capacity == 0 ? 0 :
+         length < capacity - 1 ? (size_t)length : capacity - 1;
+  if (keep != 0 && read_exact(stream, value, keep) < 0)
+    {
+      return -EIO;
+    }
+
+  if (capacity != 0)
+    {
+      value[keep] = '\0';
+    }
+
+  return skip_exact(stream, length - keep);
+}
+
+static size_t scalar_size(uint32_t type)
+{
+  switch (type)
+    {
+      case GGUF_TYPE_UINT8:
+      case GGUF_TYPE_INT8:
+      case GGUF_TYPE_BOOL:
+        return 1;
+      case GGUF_TYPE_UINT16:
+      case GGUF_TYPE_INT16:
+        return 2;
+      case GGUF_TYPE_UINT32:
+      case GGUF_TYPE_INT32:
+      case GGUF_TYPE_FLOAT32:
+        return 4;
+      case GGUF_TYPE_UINT64:
+      case GGUF_TYPE_INT64:
+      case GGUF_TYPE_FLOAT64:
+        return 8;
+      default:
+        return 0;
+    }
+}
+
+static int skip_value(FILE *stream, uint32_t type, unsigned int depth)
+{
+  uint32_t element_type;
+  uint64_t count;
+  uint64_t i;
+  uint64_t length;
+  size_t size;
+
+  if (depth > 4)
+    {
+      return -EOVERFLOW;
+    }
+
+  size = scalar_size(type);
+  if (size != 0)
+    {
+      return skip_exact(stream, size);
+    }
+
+  if (type == GGUF_TYPE_STRING)
+    {
+      if (read_exact(stream, &length, sizeof(length)) < 0)
+        {
+          return -EIO;
+        }
+
+      return skip_exact(stream, length);
+    }
+
+  if (type != GGUF_TYPE_ARRAY ||
+      read_exact(stream, &element_type, sizeof(element_type)) < 0 ||
+      read_exact(stream, &count, sizeof(count)) < 0)
+    {
+      return -EINVAL;
+    }
+
+  size = scalar_size(element_type);
+  if (size != 0)
+    {
+      if (count > UINT64_MAX / size)
+        {
+          return -EOVERFLOW;
+        }
+
+      return skip_exact(stream, count * size);
+    }
+
+  for (i = 0; i < count; i++)
+    {
+      int ret = skip_value(stream, element_type, depth + 1);
+      if (ret < 0)
+        {
+          return ret;
+        }
+    }
+
+  return 0;
+}
+
+static int print_value(FILE *stream, uint32_t type)
+{
+  char text[MODEL_VALUE_LIMIT];
+  uint64_t length;
+  uint64_t u64;
+  int64_t i64;
+  uint32_t u32;
+  int32_t i32;
+  float f32;
+  double f64;
+  uint8_t u8;
+
+  switch (type)
+    {
+      case GGUF_TYPE_STRING:
+        if (read_string(stream, text, sizeof(text), &length) < 0)
+          {
+            return -EIO;
+          }
+
+        printf("'%s'%s", text,
+               length >= sizeof(text) ? " (truncated)" : "");
+        return 0;
+      case GGUF_TYPE_UINT8:
+      case GGUF_TYPE_BOOL:
+        if (read_exact(stream, &u8, sizeof(u8)) < 0) return -EIO;
+        printf("%u", (unsigned int)u8);
+        return 0;
+      case GGUF_TYPE_UINT32:
+        if (read_exact(stream, &u32, sizeof(u32)) < 0) return -EIO;
+        printf("%" PRIu32, u32);
+        return 0;
+      case GGUF_TYPE_INT32:
+        if (read_exact(stream, &i32, sizeof(i32)) < 0) return -EIO;
+        printf("%" PRId32, i32);
+        return 0;
+      case GGUF_TYPE_UINT64:
+        if (read_exact(stream, &u64, sizeof(u64)) < 0) return -EIO;
+        printf("%" PRIu64, u64);
+        return 0;
+      case GGUF_TYPE_INT64:
+        if (read_exact(stream, &i64, sizeof(i64)) < 0) return -EIO;
+        printf("%" PRId64, i64);
+        return 0;
+      case GGUF_TYPE_FLOAT32:
+        if (read_exact(stream, &f32, sizeof(f32)) < 0) return -EIO;
+        printf("%.6g", (double)f32);
+        return 0;
+      case GGUF_TYPE_FLOAT64:
+        if (read_exact(stream, &f64, sizeof(f64)) < 0) return -EIO;
+        printf("%.9g", f64);
+        return 0;
+      default:
+        return skip_value(stream, type, 0);
+    }
+}
+
+static int interesting_key(const char *key)
+{
+  return strcmp(key, "general.architecture") == 0 ||
+         strcmp(key, "general.name") == 0 ||
+         strcmp(key, "general.file_type") == 0 ||
+         strcmp(key, "general.quantization_version") == 0 ||
+         strstr(key, ".context_length") != NULL ||
+         strstr(key, ".block_count") != NULL ||
+         strstr(key, ".embedding_length") != NULL ||
+         strstr(key, ".attention.head_count") != NULL ||
+         strcmp(key, "tokenizer.ggml.model") == 0 ||
+         strcmp(key, "tokenizer.ggml.tokens") == 0;
+}
+
+static int inspect_gguf(const char *path)
+{
+  struct gguf_reader_s reader;
+  struct stat info;
+  uint32_t magic;
+  uint64_t i;
+  int ret;
+
+  memset(&reader, 0, sizeof(reader));
+  if (stat(path, &info) < 0)
+    {
+      fprintf(stderr, "aipetllm: stat %s failed: %d\n", path, errno);
+      return 1;
+    }
+
+  reader.stream = fopen(path, "rb");
+  if (reader.stream == NULL)
+    {
+      fprintf(stderr, "aipetllm: open %s failed: %d\n", path, errno);
+      return 1;
+    }
+
+  ret = read_exact(reader.stream, &magic, sizeof(magic));
+  ret |= read_exact(reader.stream, &reader.version, sizeof(reader.version));
+  ret |= read_exact(reader.stream, &reader.tensors, sizeof(reader.tensors));
+  ret |= read_exact(reader.stream, &reader.metadata, sizeof(reader.metadata));
+  if (ret < 0 || magic != GGUF_MAGIC ||
+      reader.version < 2 || reader.version > 3)
+    {
+      fprintf(stderr, "aipetllm: invalid/unsupported GGUF header\n");
+      fclose(reader.stream);
+      return 1;
+    }
+
+  printf("GGUF path=%s\n", path);
+  printf("size=%" PRIu64 " bytes version=%" PRIu32
+         " tensors=%" PRIu64 " metadata=%" PRIu64 "\n",
+         (uint64_t)info.st_size, reader.version,
+         reader.tensors, reader.metadata);
+
+  for (i = 0; i < reader.metadata; i++)
+    {
+      char key[MODEL_KEY_LIMIT];
+      uint64_t key_length;
+      uint32_t type;
+
+      ret = read_string(reader.stream, key, sizeof(key), &key_length);
+      if (ret < 0 || key_length >= sizeof(key) ||
+          read_exact(reader.stream, &type, sizeof(type)) < 0)
+        {
+          fprintf(stderr, "aipetllm: malformed metadata at index %" PRIu64
+                          "\n", i);
+          fclose(reader.stream);
+          return 1;
+        }
+
+      if (interesting_key(key) && type != GGUF_TYPE_ARRAY)
+        {
+          printf("%s=", key);
+          ret = print_value(reader.stream, type);
+          putchar('\n');
+        }
+      else if (strcmp(key, "tokenizer.ggml.tokens") == 0 &&
+               type == GGUF_TYPE_ARRAY)
+        {
+          uint32_t element_type;
+          uint64_t count;
+
+          if (read_exact(reader.stream, &element_type,
+                         sizeof(element_type)) < 0 ||
+              read_exact(reader.stream, &count, sizeof(count)) < 0)
+            {
+              ret = -EIO;
+            }
+          else
+            {
+              printf("%s.count=%" PRIu64 "\n", key, count);
+              ret = 0;
+              for (uint64_t token = 0; token < count && ret == 0; token++)
+                {
+                  ret = skip_value(reader.stream, element_type, 1);
+                }
+            }
+        }
+      else
+        {
+          ret = skip_value(reader.stream, type, 0);
+        }
+
+      if (ret < 0)
+        {
+          fprintf(stderr, "aipetllm: unsupported metadata '%s' type=%" PRIu32
+                          " (%d)\n", key, type, ret);
+          fclose(reader.stream);
+          return 1;
+        }
+    }
+
+  puts("GGUF metadata checkpoint passed; tensor loading/inference pending.");
+  fclose(reader.stream);
+  return 0;
+}
+
+static int memory_probe(unsigned long target_mib)
+{
+  void **chunks;
+  size_t chunk_count;
+  size_t allocated = 0;
+  size_t index;
+
+  if (target_mib == 0 || target_mib > 3072)
+    {
+      fputs("aipetllm: probe range is 1..3072 MiB\n", stderr);
+      return 1;
+    }
+
+  chunk_count = ((size_t)target_mib * 1024 * 1024 + PROBE_CHUNK - 1) /
+                PROBE_CHUNK;
+  chunks = calloc(chunk_count, sizeof(*chunks));
+  if (chunks == NULL)
+    {
+      fputs("aipetllm: cannot allocate probe table\n", stderr);
+      return 1;
+    }
+
+  for (index = 0; index < chunk_count; index++)
+    {
+      size_t remaining = (size_t)target_mib * 1024 * 1024 - allocated;
+      size_t length = remaining < PROBE_CHUNK ? remaining : PROBE_CHUNK;
+      size_t offset;
+
+      chunks[index] = malloc(length);
+      if (chunks[index] == NULL)
+        {
+          break;
+        }
+
+      for (offset = 0; offset < length; offset += 4096)
+        {
+          ((volatile uint8_t *)chunks[index])[offset] =
+            (uint8_t)(index ^ offset);
+        }
+
+      allocated += length;
+    }
+
+  printf("memory-probe requested=%lu MiB allocated-touched=%lu MiB "
+         "chunks=%lu/%lu\n", target_mib,
+         (unsigned long)(allocated / (1024 * 1024)),
+         (unsigned long)index, (unsigned long)chunk_count);
+
+  while (index != 0)
+    {
+      free(chunks[--index]);
+    }
+
+  free(chunks);
+  return allocated == (size_t)target_mib * 1024 * 1024 ? 0 : 1;
+}
+
+static void usage(void)
+{
+  puts("AI Pet local LLM stage 1");
+  puts("Usage:");
+  puts("  aipetllm info");
+  puts("  aipetllm probe [MiB]");
+  puts("  aipetllm gguf [model.gguf]");
+  puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
+}
+
+int main(int argc, char **argv)
+{
+  if (argc == 2 && strcmp(argv[1], "info") == 0)
+    {
+      printf("backend=CPU/ARM64 model=%s\n", MODEL_DEFAULT);
+      puts("stage=large-file/memory/GGUF validation; llama.cpp pending");
+      puts("recommended context=512 initial threads=2 quant=Q4_K_M");
+      return 0;
+    }
+
+  if ((argc == 2 || argc == 3) && strcmp(argv[1], "probe") == 0)
+    {
+      char *end = NULL;
+      unsigned long mib = argc == 3 ? strtoul(argv[2], &end, 10) : 1024;
+      if (argc == 3 && (end == argv[2] || *end != '\0'))
+        {
+          usage();
+          return 1;
+        }
+
+      return memory_probe(mib);
+    }
+
+  if ((argc == 2 || argc == 3) && strcmp(argv[1], "gguf") == 0)
+    {
+      return inspect_gguf(argc == 3 ? argv[2] : MODEL_DEFAULT);
+    }
+
+  usage();
+  return argc == 1 ? 0 : 1;
+}

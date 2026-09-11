@@ -29,6 +29,8 @@
               dest="apps/system/a733services"/>
     <linkfile src="board/a733-cubie-a7z/openvela-overlay/apps/system/a733ftpd"
               dest="apps/system/a733ftpd"/>
+    <linkfile src="board/a733-cubie-a7z/openvela-overlay/apps/system/aipetllm"
+              dest="apps/system/aipetllm"/>
     <linkfile src="board/a733-cubie-a7z/openvela-overlay/apps/include/system/a733_services.h"
               dest="apps/include/system/a733_services.h"/>
 
