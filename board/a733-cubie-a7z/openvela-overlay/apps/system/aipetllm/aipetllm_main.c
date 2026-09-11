@@ -35,6 +35,7 @@
 #define MODEL_KEY_LIMIT 256
 #define MODEL_VALUE_LIMIT 512
 #define PROBE_CHUNK (16 * 1024 * 1024)
+#define READCHECK_CHUNK (1024 * 1024)
 
 struct gguf_reader_s
 {
@@ -43,6 +44,169 @@ struct gguf_reader_s
   uint64_t tensors;
   uint64_t metadata;
 };
+
+extern int aipetllm_cxx_checkpoint(void);
+
+static const char *file_type(mode_t mode)
+{
+  if (S_ISDIR(mode))
+    {
+      return "directory";
+    }
+
+  if (S_ISREG(mode))
+    {
+      return "regular-file";
+    }
+
+  return "other";
+}
+
+static int path_check(const char *path)
+{
+  char component[MODEL_VALUE_LIMIT];
+  struct stat info;
+  size_t length;
+  size_t index;
+
+  length = strlen(path);
+  if (length == 0 || length >= sizeof(component))
+    {
+      fprintf(stderr, "aipetllm: invalid path length %lu\n",
+              (unsigned long)length);
+      return 1;
+    }
+
+  memcpy(component, path, length + 1);
+  printf("path-check target=%s\n", path);
+
+  for (index = 1; index <= length; index++)
+    {
+      char saved;
+
+      if (component[index] != '/' && component[index] != '\0')
+        {
+          continue;
+        }
+
+      saved = component[index];
+      component[index] = '\0';
+      if (component[0] != '\0')
+        {
+          if (stat(component, &info) < 0)
+            {
+              int error = errno;
+              printf("FAIL path=%s errno=%d (%s)\n", component, error,
+                     strerror(error));
+              component[index] = saved;
+              return 1;
+            }
+
+          printf("OK path=%s type=%s size=%" PRIu64 "\n", component,
+                 file_type(info.st_mode), (uint64_t)info.st_size);
+          if (saved == '/' && !S_ISDIR(info.st_mode))
+            {
+              printf("FAIL path=%s must be a directory\n", component);
+              component[index] = saved;
+              return 1;
+            }
+        }
+
+      component[index] = saved;
+    }
+
+  if (!S_ISREG(info.st_mode))
+    {
+      printf("FAIL target is %s, expected regular-file\n",
+             file_type(info.st_mode));
+      return 1;
+    }
+
+  puts("path-check passed");
+  return 0;
+}
+
+static uint32_t crc32_update(uint32_t crc, const uint8_t *data,
+                             size_t length)
+{
+  size_t index;
+
+  crc = ~crc;
+  for (index = 0; index < length; index++)
+    {
+      unsigned int bit;
+
+      crc ^= data[index];
+      for (bit = 0; bit < 8; bit++)
+        {
+          crc = (crc >> 1) ^ (UINT32_C(0xedb88320) &
+                              (uint32_t)-(int32_t)(crc & 1));
+        }
+    }
+
+  return ~crc;
+}
+
+static int read_check(const char *path)
+{
+  struct stat info;
+  uint8_t *buffer;
+  FILE *stream;
+  uint64_t total = 0;
+  uint32_t crc = 0;
+
+  if (path_check(path) != 0 || stat(path, &info) < 0)
+    {
+      return 1;
+    }
+
+  buffer = malloc(READCHECK_CHUNK);
+  if (buffer == NULL)
+    {
+      fputs("aipetllm: cannot allocate read-check buffer\n", stderr);
+      return 1;
+    }
+
+  stream = fopen(path, "rb");
+  if (stream == NULL)
+    {
+      fprintf(stderr, "aipetllm: open %s failed: %d (%s)\n", path, errno,
+              strerror(errno));
+      free(buffer);
+      return 1;
+    }
+
+  for (;;)
+    {
+      size_t count = fread(buffer, 1, READCHECK_CHUNK, stream);
+
+      if (count != 0)
+        {
+          crc = crc32_update(crc, buffer, count);
+          total += count;
+        }
+
+      if (count != READCHECK_CHUNK)
+        {
+          if (ferror(stream))
+            {
+              fprintf(stderr, "aipetllm: read failed after %" PRIu64
+                              " bytes\n", total);
+              fclose(stream);
+              free(buffer);
+              return 1;
+            }
+
+          break;
+        }
+    }
+
+  fclose(stream);
+  free(buffer);
+  printf("read-check passed bytes=%" PRIu64 " expected=%" PRIu64
+         " crc32=%08" PRIx32 "\n", total, (uint64_t)info.st_size, crc);
+  return total == (uint64_t)info.st_size ? 0 : 1;
+}
 
 static int read_exact(FILE *stream, void *buffer, size_t length)
 {
@@ -261,7 +425,10 @@ static int inspect_gguf(const char *path)
   memset(&reader, 0, sizeof(reader));
   if (stat(path, &info) < 0)
     {
-      fprintf(stderr, "aipetllm: stat %s failed: %d\n", path, errno);
+      int error = errno;
+      fprintf(stderr, "aipetllm: stat %s failed: %d (%s)\n", path, error,
+              strerror(error));
+      path_check(path);
       return 1;
     }
 
@@ -416,6 +583,9 @@ static void usage(void)
   puts("Usage:");
   puts("  aipetllm info");
   puts("  aipetllm probe [MiB]");
+  puts("  aipetllm cxxcheck");
+  puts("  aipetllm pathcheck [model.gguf]");
+  puts("  aipetllm readcheck [model.gguf]");
   puts("  aipetllm gguf [model.gguf]");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
@@ -443,9 +613,24 @@ int main(int argc, char **argv)
       return memory_probe(mib);
     }
 
+  if (argc == 2 && strcmp(argv[1], "cxxcheck") == 0)
+    {
+      return aipetllm_cxx_checkpoint();
+    }
+
   if ((argc == 2 || argc == 3) && strcmp(argv[1], "gguf") == 0)
     {
       return inspect_gguf(argc == 3 ? argv[2] : MODEL_DEFAULT);
+    }
+
+  if ((argc == 2 || argc == 3) && strcmp(argv[1], "pathcheck") == 0)
+    {
+      return path_check(argc == 3 ? argv[2] : MODEL_DEFAULT);
+    }
+
+  if ((argc == 2 || argc == 3) && strcmp(argv[1], "readcheck") == 0)
+    {
+      return read_check(argc == 3 ? argv[2] : MODEL_DEFAULT);
     }
 
   usage();

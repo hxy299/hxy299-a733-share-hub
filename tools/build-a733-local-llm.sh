@@ -23,4 +23,4 @@ cmake --build "$build" -j"${JOBS:-8}"
 
 printf '\nA733 local-LLM stage built:\n'
 ls -lh "$build/nuttx.bin" "$build/nuttx" "$build/System.map"
-grep -E 'CONFIG_(FS_LARGEFILE|SYSTEM_AIPETLLM|AIPETLLM_)' "$build/.config"
+grep -E 'CONFIG_(FS_LARGEFILE|HAVE_CXX|CXX_STANDARD|LIBCXX|LIBCXXABI|TLS_NELEM|TLS_TASK_NELEM|SYSTEM_AIPETLLM|AIPETLLM_)' "$build/.config"

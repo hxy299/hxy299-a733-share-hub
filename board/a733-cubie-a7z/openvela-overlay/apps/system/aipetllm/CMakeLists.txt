@@ -8,6 +8,7 @@ if(CONFIG_SYSTEM_AIPETLLM)
     ${CONFIG_AIPETLLM_PROGNAME}
     SRCS
     aipetllm_main.c
+    aipetllm_cxx.cxx
     STACKSIZE
     ${CONFIG_AIPETLLM_STACKSIZE}
     PRIORITY
