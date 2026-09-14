@@ -19,6 +19,7 @@ if(CONFIG_SYSTEM_AIPETLLM)
     aipetllm_main.c
     aipetllm_cxx.cxx
     aipetllm_ggml_quant.c
+    aipetllm_modelcheck.c
     ${AIPETLLM_GGML_SOURCES}
     STACKSIZE
     ${CONFIG_AIPETLLM_STACKSIZE}

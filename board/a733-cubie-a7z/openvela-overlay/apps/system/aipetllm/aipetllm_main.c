@@ -47,6 +47,7 @@ struct gguf_reader_s
 
 extern int aipetllm_cxx_checkpoint(void);
 extern int aipetllm_ggml_quant_checkpoint(void);
+extern int aipetllm_model_checkpoint(const char *path);
 
 static const char *file_type(mode_t mode)
 {
@@ -589,6 +590,7 @@ static void usage(void)
   puts("  aipetllm pathcheck [model.gguf]");
   puts("  aipetllm readcheck [model.gguf]");
   puts("  aipetllm gguf [model.gguf]");
+  puts("  aipetllm modelcheck [model.gguf]");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
 
@@ -597,7 +599,7 @@ int main(int argc, char **argv)
   if (argc == 2 && strcmp(argv[1], "info") == 0)
     {
       printf("backend=CPU/ARM64 model=%s\n", MODEL_DEFAULT);
-      puts("stage=large-file/memory/GGUF validation; llama.cpp pending");
+      puts("stage=GGUF tensor/Qwen2 validation; GGML graph execution pending");
       puts("recommended context=512 initial threads=2 quant=Q4_K_M");
       return 0;
     }
@@ -628,6 +630,11 @@ int main(int argc, char **argv)
   if ((argc == 2 || argc == 3) && strcmp(argv[1], "gguf") == 0)
     {
       return inspect_gguf(argc == 3 ? argv[2] : MODEL_DEFAULT);
+    }
+
+  if ((argc == 2 || argc == 3) && strcmp(argv[1], "modelcheck") == 0)
+    {
+      return aipetllm_model_checkpoint(argc == 3 ? argv[2] : MODEL_DEFAULT);
     }
 
   if ((argc == 2 || argc == 3) && strcmp(argv[1], "pathcheck") == 0)
