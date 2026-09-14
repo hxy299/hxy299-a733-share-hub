@@ -106,6 +106,9 @@
 #define A733_WIFI_DATA_RX_MAX      2048u
 #define A733_WIFI_DATA_TRIES       4u
 #define A733_WIFI_RX_AUTH_TIMEOUT_MS 20u
+#define A733_WPA_WAIT_M1           1u
+#define A733_WPA_WAIT_M3           2u
+#define A733_WPA_COMPLETE          3u
 #define A733_WIFI_RX_DATA_TIMEOUT_MS 3u
 #define A733_WIFI_RX_IDLE_US         25u
 #define A733_WIFI_RX_ERROR_US      1000u
@@ -3424,6 +3427,14 @@ static int a733_wifi_associate(unsigned int result_index)
       else if (message_id == A733_AIC_SM_DISCONNECT_IND)
         {
           g_wifi.associated = false;
+          g_wifi.wpa_port_open = false;
+          g_wifi.wpa_pairwise_installed = false;
+          g_wifi.wpa_group_installed = false;
+          if (g_wifi.wpa_configured)
+            {
+              g_wifi.wpa_checkpoint = -ENETDOWN;
+              g_wifi.wpa_state = A733_WPA_WAIT_M1;
+            }
 #ifdef CONFIG_NET
           a733_wifi_net_carrier(false);
 #endif
@@ -3853,9 +3864,6 @@ static int a733_wifi_data_send_ethernet(const uint8_t *frame, size_t length)
  * by the official rwnx driver to install keys and open the controlled port.
  */
 
-#define A733_WPA_WAIT_M1          1u
-#define A733_WPA_WAIT_M3          2u
-#define A733_WPA_COMPLETE         3u
 #define A733_WPA_KEY_TYPE         0x0008u
 #define A733_WPA_KEY_INSTALL      0x0040u
 #define A733_WPA_KEY_ACK          0x0080u
@@ -4397,10 +4405,25 @@ static int a733_wifi_wpa_eapol(const uint8_t *eapol, size_t available)
           return -EPROTO;
         }
 
+      /* Message 4 must leave through the still-unkeyed data path.  The
+       * upstream supplicant sends 4/4 before installing PTK/GTK; installing
+       * PTK first made FCU760K encrypt 4/4 at the 802.11 layer.  Some APs
+       * tolerated that ordering, but strict and multi-BSSID APs discarded
+       * the frame and retransmitted Message 3 until reason 15. */
+
+      ret = a733_wifi_wpa_send_key(0x030au, g_wifi.wpa_replay,
+                                   NULL, NULL, 0);
+      if (ret < 0)
+        {
+          explicit_bzero(gtk, sizeof(gtk));
+          return ret;
+        }
+
       ret = a733_wifi_wpa_install_key(g_wifi.wpa_ptk + 32, 16, 2,
                                       0, true);
       if (ret < 0)
         {
+          explicit_bzero(gtk, sizeof(gtk));
           return ret;
         }
 
@@ -4415,13 +4438,6 @@ static int a733_wifi_wpa_eapol(const uint8_t *eapol, size_t available)
         }
 
       g_wifi.wpa_group_installed = true;
-      ret = a733_wifi_wpa_send_key(0x030au, g_wifi.wpa_replay,
-                                   NULL, NULL, 0);
-      if (ret < 0)
-        {
-          return ret;
-        }
-
       ret = a733_wifi_wpa_open_port();
       if (ret < 0)
         {

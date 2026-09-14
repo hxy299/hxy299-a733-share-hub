@@ -32,7 +32,7 @@
 - 观测到的吞吐基线：TCP 4.13 Mbit/s；UDP 10.8 Mbit/s，单次 30 秒测试丢包
   5.7%。这只是功能基线，不是峰值性能声明。
 
-## v67 openvela 公共 Wi-Fi 控制面（构建通过，待真机验证）
+## openvela 公共 Wi-Fi 控制面
 
 - `wlan0` 已实现 WEXT 扫描、扫描结果、模式、认证、密码、频率、BSSID、ESSID、
   国家码和基本状态 IOCTL；
@@ -42,6 +42,18 @@
 - 扫描缓存从 16 扩展到 64，避免密集 2.4 GHz 环境挤掉 5 GHz 结果；
 - 私有 `/dev/a733-wifi` 当前仅作为详细诊断和旧接口兼容，真机验证后再默认关闭
   写控制接口。
+
+v69 真机回归确认 WAPI 在 2.4/5 GHz 均能扫描并完成关联，但在 ZBCK-E 多 BSSID
+AP 上，AP 持续重传 EAPOL Message 3，最终以 reason 15 断开。日志同时证明 M3
+MIC、PTK/GTK 派生和 USB TX 提交均成功，因此问题定位为 Message 4 发送时序：
+旧实现先向 FCU760K 安装 PTK，再发送 M4，使 M4 被数据路径提前加密；严格 AP
+不会接受该帧。
+
+v70 候选实现已经按标准 supplicant 顺序修正为：校验/解密 M3 → 发送 M4 → 安装
+PTK → 安装 GTK → 开放 controlled port → DHCP；并在异步 disconnect indication
+到达时同步清除 carrier、密钥安装标志和 WPA 状态，避免 reason 15 后仍显示已连接。
+该版本已完成 AArch64 编译、链接和 SD 镜像文件系统校验，等待真机验证后再列入
+“已验证”基线。
 
 详细边界与验收命令见 `docs/OPENVELA_COMPONENT_BOUNDARIES.md`。
 
