@@ -33,7 +33,7 @@ YOLOv8n 六输出和动态输入均已通过真机验证，而不是固定输出
 | microSD | 完成 | SDMMC0 PIO，12 MHz/4-bit，多块读取 |
 | 文件系统 | 完成 | GPT 分区节点，FAT 数据分区读写挂载到 `/data` |
 | 板级外设 | 完成 | LED、WDT、THS、I2C2/I2C7、SPI1、风扇 PWM |
-| Wi-Fi | 完成 | FCU760K 固件、2.4/5 GHz 扫描、WPA2、DHCP、DNS |
+| Wi-Fi | 完成，v67 待板测 | FCU760K 驱动、标准 WEXT/openvela WAPI、2.4/5 GHz 扫描、WPA2、DHCP、DNS |
 | 网络服务 | 完成 | SSH、SCP、FTP、curl、wget、NTP、iperf、可选自启动 |
 | NPU | 完成基线 | VIP2 ABI、MMU/DMA/IRQ，LeNet/YOLOv5/YOLOv8 真机运行 |
 | UVC 摄像头 | 进行中 | Type-C/PHY/xHCI 检查点完成，设备枚举尚未完成 |
@@ -65,6 +65,9 @@ contest2026_274_Dogking/
 ├── contest2026_274_Dogking.xml                      # 仓库 manifest 与 linkfile
 └── openvela.xml                                     # 大赛官方基线 manifest
 ```
+
+Wi-Fi 和其他组件的 NuttX 内核层、openvela 公共组件层及板级私有层边界，见
+[`docs/OPENVELA_COMPONENT_BOUNDARIES.md`](docs/OPENVELA_COMPONENT_BOUNDARIES.md)。
 
 模板中的 hello app、quickapp 和示例日志已删除。本作品只使用板级适配形态。
 

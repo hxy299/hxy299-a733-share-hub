@@ -46,8 +46,10 @@
 #ifdef CONFIG_NET
 #  include <arpa/inet.h>
 #  include <netinet/in.h>
+#  include <net/if_arp.h>
 #  include <nuttx/net/ip.h>
 #  include <nuttx/net/netdev.h>
+#  include <nuttx/wireless/wireless.h>
 #  ifdef CONFIG_NETUTILS_DHCPC
 #    include <netutils/dhcpc.h>
 #    include <netutils/netlib.h>
@@ -100,7 +102,7 @@
 #define A733_USB_TIMEOUT_MS        500u
 #define A733_AIC_TIMEOUT_MS        2000u
 #define A733_AIC_RX_MAX            2048u
-#define A733_WIFI_SCAN_MAX         16u
+#define A733_WIFI_SCAN_MAX         64u
 #define A733_WIFI_DATA_RX_MAX      2048u
 #define A733_WIFI_DATA_TRIES       4u
 #define A733_WIFI_RX_AUTH_TIMEOUT_MS 20u
@@ -361,6 +363,12 @@ struct a733_wifi_state_s
   bool wpa_pairwise_installed;
   bool wpa_group_installed;
   bool wpa_port_open;
+  uint32_t wext_wpa_version;
+  uint32_t wext_pairwise_cipher;
+  uint16_t wext_frequency;
+  uint8_t wext_bssid[6];
+  char wext_passphrase[64];
+  uint8_t wext_passphrase_length;
 #ifdef CONFIG_NETUTILS_DHCPC
   int dhcp_checkpoint;
   pid_t dhcp_pid;
@@ -4441,6 +4449,406 @@ static int a733_wifi_wpa_eapol(const uint8_t *eapol, size_t available)
   return -ENOMSG;
 }
 
+/* WEXT is the standard wireless control ABI used by openvela's WAPI and
+ * netinit components.  FCU760K remains a board driver, but scan/association
+ * must not require the private /dev/a733-wifi protocol.
+ */
+
+static int a733_wifi_wext_wpa_connect(unsigned int index,
+                                      const char *passphrase,
+                                      size_t passphrase_length)
+{
+  int ret;
+
+  if (index >= g_wifi.scan_count || passphrase_length < 8 ||
+      passphrase_length > 63 || g_wifi.scan[index].assoc_ie_length == 0)
+    {
+      return -EINVAL;
+    }
+
+  explicit_bzero(g_wifi.wpa_pmk, sizeof(g_wifi.wpa_pmk));
+  explicit_bzero(g_wifi.wpa_ptk, sizeof(g_wifi.wpa_ptk));
+  explicit_bzero(g_wifi.wpa_snonce, sizeof(g_wifi.wpa_snonce));
+  explicit_bzero(g_wifi.wpa_assoc_ie, sizeof(g_wifi.wpa_assoc_ie));
+  g_wifi.wpa_assoc_ie_length = 0;
+  g_wifi.wpa_group_cipher = 0xff;
+  g_wifi.wpa_group_key_length = 0;
+
+  ret = a733_wifi_wpa_select_rsn(g_wifi.scan[index].assoc_ie,
+                                 g_wifi.scan[index].assoc_ie_length,
+                                 g_wifi.wpa_assoc_ie,
+                                 &g_wifi.wpa_assoc_ie_length);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  ret = a733_wifi_wpa_derive_pmk(passphrase, g_wifi.scan[index].ssid,
+                                 g_wifi.wpa_pmk);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  g_wifi.wpa_configured = true;
+  g_wifi.wpa_state = A733_WPA_WAIT_M1;
+  g_wifi.wpa_checkpoint = -EINPROGRESS;
+  g_wifi.wpa_pairwise_installed = false;
+  g_wifi.wpa_group_installed = false;
+  g_wifi.wpa_port_open = false;
+#ifdef CONFIG_NETUTILS_DHCPC
+  g_wifi.dhcp_checkpoint = -ENETDOWN;
+  g_wifi.dhcp_address = 0;
+  g_wifi.dhcp_netmask = 0;
+  g_wifi.dhcp_router = 0;
+  g_wifi.dhcp_dns = 0;
+  g_wifi.dhcp_lease = 0;
+#endif
+  g_wifi.wpa_diag_reports = 0;
+  g_wifi.wpa_diag_available = 0;
+  g_wifi.wpa_diag_body_length = 0;
+  g_wifi.wpa_diag_key_info = 0;
+  g_wifi.wpa_diag_key_data_length = 0;
+  g_wifi.wpa_diag_version = 0;
+  g_wifi.wpa_diag_type = 0;
+  g_wifi.wpa_diag_descriptor = 0;
+  memset(g_wifi.wpa_replay, 0, sizeof(g_wifi.wpa_replay));
+
+  ret = a733_wifi_associate(index);
+  if (ret == OK)
+    {
+      ret = a733_wifi_data_send_eapol_start();
+    }
+
+  if (ret < 0)
+    {
+      g_wifi.wpa_checkpoint = ret;
+      g_wifi.wpa_configured = false;
+      explicit_bzero(g_wifi.wpa_pmk, sizeof(g_wifi.wpa_pmk));
+      return ret;
+    }
+
+  syslog(LOG_INFO,
+         "A733 WIFI: openvela WEXT WPA2 started ssid='%s'; waiting for "
+         "four-way handshake\n", g_wifi.associated_ssid);
+  return OK;
+}
+
+static int a733_wifi_wext_scan_results(struct iwreq *iwr)
+{
+  size_t required = 0;
+  char *pointer;
+  unsigned int index;
+
+  for (index = 0; index < g_wifi.scan_count; index++)
+    {
+      size_t ssid_length = strnlen(g_wifi.scan[index].ssid, 32);
+
+      required += IW_EV_LEN(ap_addr) + IW_EV_LEN(freq) + IW_EV_LEN(qual) +
+                  IW_EV_LEN(data) + IW_EV_LEN(essid) +
+                  ((ssid_length + 3u) & ~3u);
+    }
+
+  if (iwr->u.data.pointer == NULL || iwr->u.data.length < required)
+    {
+      iwr->u.data.length = required;
+      return required == 0 ? OK : -E2BIG;
+    }
+
+  pointer = iwr->u.data.pointer;
+  for (index = 0; index < g_wifi.scan_count; index++)
+    {
+      struct a733_wifi_scan_s *scan = &g_wifi.scan[index];
+      struct iw_event *event;
+      size_t ssid_length = strnlen(scan->ssid, 32);
+
+      event = (struct iw_event *)pointer;
+      memset(event, 0, IW_EV_LEN(ap_addr));
+      event->cmd = SIOCGIWAP;
+      event->u.ap_addr.sa_family = ARPHRD_ETHER;
+      memcpy(event->u.ap_addr.sa_data, scan->bssid, 6);
+      event->len = IW_EV_LEN(ap_addr);
+      pointer += event->len;
+
+      event = (struct iw_event *)pointer;
+      memset(event, 0, IW_EV_LEN(essid) + ((ssid_length + 3u) & ~3u));
+      event->cmd = SIOCGIWESSID;
+      event->u.essid.flags = 1;
+      event->u.essid.length = ssid_length;
+      event->u.essid.pointer = (void *)sizeof(event->u.essid);
+      memcpy(&event->u.essid + 1, scan->ssid, ssid_length);
+      event->len = IW_EV_LEN(essid) + ((ssid_length + 3u) & ~3u);
+      pointer += event->len;
+
+      event = (struct iw_event *)pointer;
+      memset(event, 0, IW_EV_LEN(qual));
+      event->cmd = IWEVQUAL;
+      event->u.qual.level = (uint8_t)scan->rssi;
+      event->u.qual.updated = IW_QUAL_DBM | IW_QUAL_LEVEL_UPDATED |
+                              IW_QUAL_QUAL_INVALID |
+                              IW_QUAL_NOISE_INVALID;
+      event->len = IW_EV_LEN(qual);
+      pointer += event->len;
+
+      event = (struct iw_event *)pointer;
+      memset(event, 0, IW_EV_LEN(freq));
+      event->cmd = SIOCGIWFREQ;
+      event->u.freq.m = scan->frequency * 100000;
+      event->u.freq.e = 1;
+      event->len = IW_EV_LEN(freq);
+      pointer += event->len;
+
+      event = (struct iw_event *)pointer;
+      memset(event, 0, IW_EV_LEN(data));
+      event->cmd = SIOCGIWENCODE;
+      event->u.data.flags = scan->privacy ?
+                            IW_ENCODE_ENABLED | IW_ENCODE_NOKEY :
+                            IW_ENCODE_DISABLED;
+      event->len = IW_EV_LEN(data);
+      pointer += event->len;
+    }
+
+  iwr->u.data.length = pointer - (char *)iwr->u.data.pointer;
+  return OK;
+}
+
+static int a733_wifi_wext_find(const char *ssid, size_t ssid_length)
+{
+  int selected = -ENOENT;
+  int best_rssi = -128;
+  unsigned int index;
+
+  for (index = 0; index < g_wifi.scan_count; index++)
+    {
+      struct a733_wifi_scan_s *scan = &g_wifi.scan[index];
+
+      if (strnlen(scan->ssid, 32) != ssid_length ||
+          memcmp(scan->ssid, ssid, ssid_length) != 0)
+        {
+          continue;
+        }
+
+      if (g_wifi.wext_frequency != 0 &&
+          scan->frequency != g_wifi.wext_frequency)
+        {
+          continue;
+        }
+
+      if (memcmp(g_wifi.wext_bssid, "\0\0\0\0\0\0", 6) != 0 &&
+          memcmp(scan->bssid, g_wifi.wext_bssid, 6) != 0)
+        {
+          continue;
+        }
+
+      if (selected < 0 || scan->rssi > best_rssi)
+        {
+          selected = index;
+          best_rssi = scan->rssi;
+        }
+    }
+
+  return selected;
+}
+
+#ifdef CONFIG_NETDEV_IOCTL
+static int a733_wifi_net_ioctl(struct net_driver_s *dev, int cmd,
+                               unsigned long arg)
+{
+  struct iwreq *iwr = (struct iwreq *)arg;
+  int index;
+  int ret = OK;
+
+  (void)dev;
+  switch (cmd)
+    {
+      case SIOCSIWSCAN:
+        return a733_wifi_scan_group(true, true, false);
+
+      case SIOCGIWSCAN:
+        return a733_wifi_wext_scan_results(iwr);
+
+      case SIOCSIWMODE:
+        return iwr->u.mode == IW_MODE_INFRA ||
+               iwr->u.mode == IW_MODE_AUTO ? OK : -ENOTSUP;
+
+      case SIOCGIWMODE:
+        iwr->u.mode = IW_MODE_INFRA;
+        return OK;
+
+      case SIOCSIWAUTH:
+        switch (iwr->u.param.flags & IW_AUTH_INDEX)
+          {
+            case IW_AUTH_WPA_VERSION:
+              g_wifi.wext_wpa_version = iwr->u.param.value;
+              return OK;
+            case IW_AUTH_CIPHER_PAIRWISE:
+            case IW_AUTH_CIPHER_GROUP:
+              g_wifi.wext_pairwise_cipher = iwr->u.param.value;
+              return OK;
+            default:
+              return OK;
+          }
+
+      case SIOCGIWAUTH:
+        if ((iwr->u.param.flags & IW_AUTH_INDEX) == IW_AUTH_WPA_VERSION)
+          {
+            iwr->u.param.value = g_wifi.wext_wpa_version;
+          }
+        else
+          {
+            iwr->u.param.value = g_wifi.wext_pairwise_cipher;
+          }
+        return OK;
+
+      case SIOCSIWENCODEEXT:
+        {
+          struct iw_encode_ext *ext = iwr->u.encoding.pointer;
+
+          if (ext == NULL || ext->key_len > 63 ||
+              iwr->u.encoding.length < sizeof(*ext) + ext->key_len)
+            {
+              return -EINVAL;
+            }
+
+          explicit_bzero(g_wifi.wext_passphrase,
+                         sizeof(g_wifi.wext_passphrase));
+          memcpy(g_wifi.wext_passphrase, ext->key, ext->key_len);
+          g_wifi.wext_passphrase_length = ext->key_len;
+          return OK;
+        }
+
+      case SIOCGIWENCODEEXT:
+        {
+          struct iw_encode_ext *ext = iwr->u.encoding.pointer;
+
+          if (ext == NULL || iwr->u.encoding.length < sizeof(*ext))
+            {
+              return -E2BIG;
+            }
+
+          /* Passphrases are write-only.  Never copy a saved secret back to
+           * a caller through WEXT or a diagnostic command.
+           */
+
+          memset(ext, 0, sizeof(*ext));
+          ext->alg = IW_ENCODE_ALG_CCMP;
+          ext->key_len = 0;
+          iwr->u.encoding.flags = IW_ENCODE_ENABLED | IW_ENCODE_NOKEY;
+          iwr->u.encoding.length = sizeof(*ext);
+          return OK;
+        }
+
+      case SIOCSIWFREQ:
+        if (iwr->u.freq.e == 0)
+          {
+            int channel = iwr->u.freq.m;
+            g_wifi.wext_frequency = channel == 14 ? 2484 :
+              channel <= 13 ? 2407 + channel * 5 : 5000 + channel * 5;
+          }
+        else if (iwr->u.freq.e == 1)
+          {
+            g_wifi.wext_frequency = iwr->u.freq.m / 100000;
+          }
+        else
+          {
+            return -EINVAL;
+          }
+        return OK;
+
+      case SIOCGIWFREQ:
+        iwr->u.freq.m = g_wifi.wext_frequency * 100000;
+        iwr->u.freq.e = 1;
+        return OK;
+
+      case SIOCSIWAP:
+        if (memcmp(iwr->u.ap_addr.sa_data, "\0\0\0\0\0\0", 6) == 0)
+          {
+            memset(g_wifi.wext_bssid, 0, sizeof(g_wifi.wext_bssid));
+            return g_wifi.associated ? a733_wifi_disconnect() : OK;
+          }
+        memcpy(g_wifi.wext_bssid, iwr->u.ap_addr.sa_data, 6);
+        return OK;
+
+      case SIOCGIWAP:
+        iwr->u.ap_addr.sa_family = ARPHRD_ETHER;
+        memcpy(iwr->u.ap_addr.sa_data, g_wifi.associated_bssid, 6);
+        return OK;
+
+      case SIOCSIWESSID:
+        if (iwr->u.essid.pointer == NULL || iwr->u.essid.length == 0 ||
+            iwr->u.essid.flags == 0)
+          {
+            return g_wifi.associated ? a733_wifi_disconnect() : OK;
+          }
+        if (iwr->u.essid.length > 32)
+          {
+            return -EINVAL;
+          }
+        index = a733_wifi_wext_find(iwr->u.essid.pointer,
+                                    iwr->u.essid.length);
+        if (index < 0)
+          {
+            return index;
+          }
+        if (g_wifi.wext_wpa_version == IW_AUTH_WPA_VERSION_DISABLED ||
+            g_wifi.scan[index].assoc_ie_length == 0)
+          {
+            g_wifi.wpa_configured = false;
+            return a733_wifi_associate(index);
+          }
+        if ((g_wifi.wext_wpa_version & IW_AUTH_WPA_VERSION_WPA2) == 0 ||
+            (g_wifi.wext_pairwise_cipher & IW_AUTH_CIPHER_CCMP) == 0)
+          {
+            return -ENOTSUP;
+          }
+        return a733_wifi_wext_wpa_connect(
+          index, g_wifi.wext_passphrase, g_wifi.wext_passphrase_length);
+
+      case SIOCGIWESSID:
+        if (iwr->u.essid.pointer == NULL ||
+            iwr->u.essid.length < strlen(g_wifi.associated_ssid))
+          {
+            iwr->u.essid.length = strlen(g_wifi.associated_ssid);
+            return -E2BIG;
+          }
+        iwr->u.essid.length = strlen(g_wifi.associated_ssid);
+        memcpy(iwr->u.essid.pointer, g_wifi.associated_ssid,
+               iwr->u.essid.length);
+        iwr->u.essid.flags = g_wifi.associated ? 1 : 0;
+        return OK;
+
+      case SIOCGIWSENS:
+        iwr->u.sens.value = g_wifi.associated ? 0 : -128;
+        iwr->u.sens.flags = IW_QUAL_DBM;
+        return OK;
+
+      case SIOCGIWCOUNTRY:
+        if (iwr->u.data.pointer == NULL || iwr->u.data.length < 3)
+          {
+            iwr->u.data.length = 3;
+            return -E2BIG;
+          }
+        memcpy(iwr->u.data.pointer, "CN", 3);
+        iwr->u.data.length = 3;
+        return OK;
+
+      case SIOCSIWCOUNTRY:
+        return iwr->u.data.pointer != NULL &&
+               strncmp(iwr->u.data.pointer, "CN", 2) == 0 ? OK : -ENOTSUP;
+
+      case SIOCGIWNAME:
+        strlcpy(iwr->u.name, "IEEE 802.11", sizeof(iwr->u.name));
+        return OK;
+
+      default:
+        ret = -ENOTTY;
+        break;
+    }
+
+  return ret;
+}
+#endif
+
 static int a733_wifi_net_txpoll(struct net_driver_s *dev)
 {
   int ret = OK;
@@ -4710,6 +5118,9 @@ static int a733_wifi_netdev_register(void)
   priv->dev.d_ifup = a733_wifi_net_ifup;
   priv->dev.d_ifdown = a733_wifi_net_ifdown;
   priv->dev.d_txavail = a733_wifi_net_txavail;
+#ifdef CONFIG_NETDEV_IOCTL
+  priv->dev.d_ioctl = a733_wifi_net_ioctl;
+#endif
   priv->dev.d_private = priv;
   memcpy(priv->dev.d_mac.ether.ether_addr_octet,
          g_wifi.mac, sizeof(g_wifi.mac));
@@ -5434,6 +5845,8 @@ int a733_wifi_usb_initialize(void)
   g_wifi.disconnect_reason = 0xffff;
   g_wifi.data_checkpoint = -EAGAIN;
   g_wifi.data_tx_checkpoint = -EAGAIN;
+  g_wifi.wext_wpa_version = IW_AUTH_WPA_VERSION_WPA2;
+  g_wifi.wext_pairwise_cipher = IW_AUTH_CIPHER_CCMP;
 #ifdef CONFIG_NETUTILS_DHCPC
   g_wifi.dhcp_checkpoint = -EAGAIN;
   g_wifi.dhcp_pid = -1;

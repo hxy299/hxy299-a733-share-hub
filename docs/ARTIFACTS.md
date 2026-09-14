@@ -6,16 +6,22 @@
 ## 最新开发镜像
 
 ```text
-名称：openvela-a733-cubie-a7z-sd-usb-camera-v65-candidate.img
+名称：openvela-a733-cubie-a7z-sd-openvela-wapi-v67-candidate.img
 大小：2147483648 字节
-SHA-256：f2f126c414b24e2e77f6fd8c239b5c7e2a0b2bc03847f86051268ca175266683
+SHA-256：51934ef1f1bfc309970d507b8f970d5d4f77628a4fb35426a603c7df867313fe
 ```
 
-这是候选镜像，因为 USB 摄像头枚举尚未完成。镜像内核的校验值为：
+该镜像从已验证的 v66 镜像复制生成，只替换第 3 分区中的 openvela 内核；原镜像
+未被修改。镜像内核的校验值为：
 
 ```text
-SHA-256：583fad8f85de3a0655c16b40a464d1e36866245e292dde39fb0b699c734908fb
+大小：1615080 字节
+SHA-256：3f602f2cb25d3a0bf188e93dd93dbae9cdc33e1e50ca3f66d7c9809d0504434f
 ```
+
+`tools/verify-a733-image.sh` 已确认 GPT 无错误、openvela ext4 文件系统无错误，且从
+镜像重新提取的内核与构建产物 SHA-256 完全相同。v67 仍是候选镜像，必须完成
+WAPI/WEXT 真机验收后再标记为发布版。
 
 最终比赛发布版本必须重新构建并验证镜像，将其作为 GitHub Release 资源，
 同时在本文件中补充下载地址、大小和 SHA-256。

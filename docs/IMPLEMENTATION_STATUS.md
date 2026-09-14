@@ -1,6 +1,6 @@
 # A733 / Cubie A7Z 适配状态
 
-状态日期：2026-09-11。“已通过”表示已在真实的 4 GiB Cubie A7Z 上观察到，
+状态日期：2026-09-14。“已通过”表示已在真实的 4 GiB Cubie A7Z 上观察到，
 而不只是完成编译。
 
 ## 已验证的系统基线
@@ -31,6 +31,19 @@
 - 板载 TRNG 为 `/dev/random` 和 `/dev/urandom` 提供 TLS/SSH 随机数。
 - 观测到的吞吐基线：TCP 4.13 Mbit/s；UDP 10.8 Mbit/s，单次 30 秒测试丢包
   5.7%。这只是功能基线，不是峰值性能声明。
+
+## v67 openvela 公共 Wi-Fi 控制面（构建通过，待真机验证）
+
+- `wlan0` 已实现 WEXT 扫描、扫描结果、模式、认证、密码、频率、BSSID、ESSID、
+  国家码和基本状态 IOCTL；
+- 已启用并成功编译 openvela `apps/wireless/wapi` 库及 `wapi` 命令；
+- `wifi scan/list/connect/disconnect` 已从私有字符设备写命令迁移到 WAPI；
+- 密码仍由 `wifi connect` 隐藏式读取，WEXT 查询不会回显密码；
+- 扫描缓存从 16 扩展到 64，避免密集 2.4 GHz 环境挤掉 5 GHz 结果；
+- 私有 `/dev/a733-wifi` 当前仅作为详细诊断和旧接口兼容，真机验证后再默认关闭
+  写控制接口。
+
+详细边界与验收命令见 `docs/OPENVELA_COMPONENT_BOUNDARIES.md`。
 
 ## 已验证的 VIP2 NPU
 

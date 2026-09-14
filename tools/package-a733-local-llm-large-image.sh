@@ -76,7 +76,7 @@ echo "Copying the known-good base image..."
 cp --reflink=auto -- "$base_image" "$output_image"
 dd if="$rootfs_image" of="$output_image" bs="$sector_size" \
   seek="$rootfs_first_lba" count="$rootfs_sectors" \
-  conv=notrunc,sparse status=none
+  conv=notrunc status=none
 
 truncate -s "${size_gib}G" "$output_image"
 "$sgdisk" -e "$output_image" >/dev/null

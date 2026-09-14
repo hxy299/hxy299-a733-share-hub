@@ -24,11 +24,13 @@
 #endif
 
 #include <netutils/netlib.h>
+#include <wireless/wapi.h>
 #ifdef CONFIG_NETUTILS_NTPCLIENT
 #  include <netutils/ntpclient.h>
 #endif
 
 #define WIFI_DEVICE       "/dev/a733-wifi"
+#define WIFI_IFNAME       "wlan0"
 #define WIFI_REPORT_SIZE  12288
 #define WIFI_PASSWORD_MAX 66
 
@@ -144,6 +146,7 @@ static void wifi_clear(void *buffer, size_t length)
     }
 }
 
+#ifdef CONFIG_A733_WIFI_PRIVATE_CONTROL_COMPAT
 static int wifi_control(const char *command)
 {
   int fd;
@@ -161,6 +164,7 @@ static int wifi_control(const char *command)
   close(fd);
   return error;
 }
+#endif
 
 static int wifi_report(char *report, size_t report_size)
 {
@@ -197,8 +201,197 @@ static int wifi_report(char *report, size_t report_size)
   return 0;
 }
 
+static bool wifi_band_matches(double frequency, unsigned int band)
+{
+  double mhz = frequency > 1000000.0 ? frequency / 1000000.0 : frequency;
+
+  return band == 0 || (band == 2 && mhz < 5000.0) ||
+         (band == 5 && mhz >= 5000.0);
+}
+
+static int wifi_wapi_collect(unsigned int band, const char *wanted,
+                             double *selected_frequency, bool print)
+{
+  struct wapi_list_s list;
+  struct wapi_scan_info_s *info;
+  double best_frequency = 0.0;
+  int best_rssi = -256;
+  int found = 0;
+  int sock;
+  int ret;
+
+  memset(&list, 0, sizeof(list));
+  sock = wapi_make_socket();
+  if (sock < 0)
+    {
+      return sock;
+    }
+
+  ret = wapi_scan_coll(sock, WIFI_IFNAME, &list);
+  close(sock);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  for (info = list.head.scan; info != NULL; info = info->next)
+    {
+      double mhz = info->freq > 1000000.0 ?
+                   info->freq / 1000000.0 : info->freq;
+
+      if (!info->has_essid || !info->has_freq ||
+          !wifi_band_matches(info->freq, band))
+        {
+          continue;
+        }
+
+      if (print)
+        {
+          printf("[%d] %-4s %4.0f MHz %4d dBm  %s\n", found,
+                 mhz >= 5000.0 ? "5G" : "2.4G", mhz,
+                 info->has_rssi ? info->rssi : -128, info->essid);
+        }
+
+      found++;
+      if (wanted != NULL && strcmp(info->essid, wanted) == 0 &&
+          (!info->has_rssi || info->rssi > best_rssi))
+        {
+          best_rssi = info->has_rssi ? info->rssi : -128;
+          best_frequency = info->freq;
+        }
+    }
+
+  wapi_scan_coll_free(&list);
+  if (selected_frequency != NULL)
+    {
+      *selected_frequency = best_frequency;
+    }
+
+  if (wanted != NULL && best_frequency == 0.0)
+    {
+      return -ENOENT;
+    }
+
+  if (found == 0 && print)
+    {
+      puts("No networks found.");
+    }
+
+  return found > 0 ? found : -ENODATA;
+}
+
+static int wifi_wapi_scan(unsigned int band, const char *wanted,
+                          double *selected_frequency, bool print)
+{
+  int sock;
+  int ret;
+  int attempt;
+
+  sock = wapi_make_socket();
+  if (sock < 0)
+    {
+      return sock;
+    }
+
+  ret = wapi_scan_init(sock, WIFI_IFNAME, NULL);
+  if (ret < 0)
+    {
+      close(sock);
+      return ret;
+    }
+
+  for (attempt = 0; attempt < 25 && !g_cancel; attempt++)
+    {
+      ret = wapi_scan_stat(sock, WIFI_IFNAME);
+      if (ret <= 0)
+        {
+          break;
+        }
+
+      usleep(200000);
+    }
+
+  close(sock);
+  if (g_cancel)
+    {
+      return -EINTR;
+    }
+
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  return wifi_wapi_collect(band, wanted, selected_frequency, print);
+}
+
+static int wifi_wapi_disconnect(void)
+{
+  int sock = wapi_make_socket();
+
+  if (sock < 0)
+    {
+      return sock;
+    }
+
+  wpa_driver_wext_disconnect(sock, WIFI_IFNAME);
+  close(sock);
+  return 0;
+}
+
+static int wifi_wapi_associate(const char *ssid, const char *password,
+                               double frequency)
+{
+  int sock;
+  int ret;
+
+  sock = wapi_make_socket();
+  if (sock < 0)
+    {
+      return sock;
+    }
+
+  ret = wapi_set_mode(sock, WIFI_IFNAME, WAPI_MODE_MANAGED);
+  if (ret == 0)
+    {
+      ret = wpa_driver_wext_set_auth_param(sock, WIFI_IFNAME,
+                                           IW_AUTH_WPA_VERSION,
+                                           IW_AUTH_WPA_VERSION_WPA2);
+    }
+
+  if (ret == 0)
+    {
+      ret = wpa_driver_wext_set_auth_param(sock, WIFI_IFNAME,
+                                           IW_AUTH_CIPHER_PAIRWISE,
+                                           IW_AUTH_CIPHER_CCMP);
+    }
+
+  if (ret == 0 && frequency > 0.0)
+    {
+      ret = wapi_set_freq(sock, WIFI_IFNAME, frequency, WAPI_FREQ_FIXED);
+    }
+
+  if (ret == 0)
+    {
+      ret = wpa_driver_wext_set_key_ext(sock, WIFI_IFNAME, WPA_ALG_CCMP,
+                                        password, strlen(password));
+    }
+
+  if (ret == 0)
+    {
+      ret = wapi_set_essid(sock, WIFI_IFNAME, ssid, WAPI_ESSID_ON);
+    }
+
+  close(sock);
+  return ret;
+}
+
+#ifdef CONFIG_A733_WIFI_PRIVATE_CONTROL_COMPAT
 static int wifi_print_list(const char *report)
 {
+  /* Compatibility fallback for old images.  New images obtain scan results
+   * from openvela's WAPI/WEXT interface in wifi_wapi_collect().
+   */
   const char *line = report;
   int found = 0;
 
@@ -300,6 +493,7 @@ static int wifi_find_ssid(const char *report, const char *wanted,
 
   return -ENOENT;
 }
+#endif
 
 static int wifi_password(char password[WIFI_PASSWORD_MAX])
 {
@@ -352,24 +546,24 @@ static int wifi_password(char password[WIFI_PASSWORD_MAX])
 
 static int wifi_scan(const char *band, char *report)
 {
-  const char *command;
+  unsigned int wanted_band = 0;
   int ret;
 
   if (band == NULL || strcmp(band, "all") == 0)
     {
-      command = "scanall";
+      wanted_band = 0;
     }
   else if (strcmp(band, "2") == 0 || strcmp(band, "2.4") == 0)
     {
-      command = "scan2";
+      wanted_band = 2;
     }
   else if (strcmp(band, "5") == 0)
     {
-      command = "scan5";
+      wanted_band = 5;
     }
   else if (strcmp(band, "dfs") == 0)
     {
-      command = "scandfs";
+      wanted_band = 5;
     }
   else
     {
@@ -377,27 +571,16 @@ static int wifi_scan(const char *band, char *report)
     }
 
   printf("Scanning %s...\n", band == NULL ? "2.4/5 GHz" : band);
-  ret = wifi_control(command);
-  if (ret < 0 && ret != -ENODATA)
-    {
-      return ret;
-    }
-
-  ret = wifi_report(report, WIFI_REPORT_SIZE);
-  if (ret < 0)
-    {
-      return ret;
-    }
-
-  return wifi_print_list(report) > 0 ? 0 : -ENODATA;
+  (void)report;
+  ret = wifi_wapi_scan(wanted_band, NULL, NULL, true);
+  return ret > 0 ? 0 : ret;
 }
 
 static int wifi_connect(const char *ssid, const char *band, char *report,
                          const char *saved_password)
 {
   char password[WIFI_PASSWORD_MAX];
-  char command[96];
-  int index;
+  double frequency = 0.0;
   int ret;
   unsigned int waited;
   unsigned int attempt;
@@ -426,27 +609,27 @@ static int wifi_connect(const char *ssid, const char *band, char *report,
    * SSID is advertised on both 2.4 and 5 GHz.
    */
 
-  index = -ENOENT;
-  for (attempt = 0; attempt < 3 && index < 0; attempt++)
+  ret = -ENOENT;
+  for (attempt = 0; attempt < 3 && ret < 0; attempt++)
     {
       if (g_cancel) return -EINTR;
-      ret = wifi_scan(band, report);
-      if (ret < 0 && ret != -ENODATA)
+      printf("Scanning %s...\n", band == NULL ? "2.4/5 GHz" : band);
+      ret = wifi_wapi_scan(wanted_band, ssid, &frequency, true);
+      if (ret < 0 && ret != -ENOENT && ret != -ENODATA)
         {
           return ret;
         }
 
-      index = wifi_find_ssid(report, ssid, wanted_band);
-      if (index < 0 && attempt + 1 < 3)
+      if (ret < 0 && attempt + 1 < 3)
         {
           puts("Requested SSID not seen; retrying scan...");
           usleep(300000);
         }
     }
 
-  if (index < 0)
+  if (ret < 0)
     {
-      return index;
+      return ret;
     }
 
   memset(password, 0, sizeof(password));
@@ -464,10 +647,8 @@ static int wifi_connect(const char *ssid, const char *band, char *report,
 
   if (strlen(password) < 8 || strlen(password) > 63)
     { ret = -EINVAL; goto done; }
-  snprintf(command, sizeof(command), "wpa2=%d,%s", index, password);
   if (g_cancel) { ret = -EINTR; goto done; }
-  ret = wifi_control(command);
-  wifi_clear(command, sizeof(command));
+  ret = wifi_wapi_associate(ssid, password, frequency);
   if (ret < 0)
     {
       goto done;
@@ -479,7 +660,7 @@ static int wifi_connect(const char *ssid, const char *band, char *report,
       usleep(500000);
       if (g_cancel)
         {
-          wifi_control("disconnect");
+          wifi_wapi_disconnect();
           ret = -EINTR;
           goto done;
         }
@@ -519,7 +700,6 @@ static int wifi_connect(const char *ssid, const char *band, char *report,
   ret = -ETIMEDOUT;
 done:
   wifi_clear(password, sizeof(password));
-  wifi_clear(command, sizeof(command));
   return ret;
 }
 
@@ -597,11 +777,8 @@ int main(int argc, char *argv[])
     }
   else if (argc == 2 && strcmp(argv[1], "list") == 0)
     {
-      ret = wifi_report(report, WIFI_REPORT_SIZE);
-      if (ret == 0)
-        {
-          ret = wifi_print_list(report) > 0 ? 0 : -ENODATA;
-        }
+      ret = wifi_wapi_collect(0, NULL, NULL, true);
+      if (ret > 0) ret = 0;
     }
   else if ((argc == 3 || argc == 4) &&
            strcmp(argv[1], "connect") == 0)
@@ -644,7 +821,7 @@ int main(int argc, char *argv[])
 #endif
   else if (argc == 2 && strcmp(argv[1], "disconnect") == 0)
     {
-      ret = wifi_control("disconnect");
+      ret = wifi_wapi_disconnect();
     }
   else if (argc == 3 && strcmp(argv[1], "dns") == 0)
     {

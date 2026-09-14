@@ -117,3 +117,37 @@ sha256: bfc3d482d579f6c633af81ab5e002bdb9bcaa324b259719c155223ca396893be
 最新诊断可以读取有效的 xHCI 能力寄存器块，但在破坏厂商 Combo PHY 交接后，
 xHCI HCRST 无法清零；随后 DWC3/app 寄存器读取为零。这里记录的是正在处理的
 驱动问题，不应宣称摄像头已经成功。
+
+## v67 WEXT/WAPI 构建与镜像校验
+
+2026-09-14 完成全量构建和两次增量构建，以下目标均编译并链接成功：
+
+```text
+vendor/allwinnertech/chips/a733/a733_wifi_usb.c
+apps/wireless/wapi
+apps/system/a733wifi
+```
+
+构建配置包含 `CONFIG_NETDEV_WIRELESS_IOCTL=y`、`CONFIG_WIRELESS_WAPI=y` 和
+`CONFIG_WIRELESS_WAPI_CMDTOOL=y`。最终内核：
+
+```text
+size:   1615080 bytes
+sha256: 3f602f2cb25d3a0bf188e93dd93dbae9cdc33e1e50ca3f66d7c9809d0504434f
+```
+
+候选镜像：
+
+```text
+openvela-a733-cubie-a7z-sd-openvela-wapi-v67-candidate.img
+size:   2147483648 bytes
+sha256: 51934ef1f1bfc309970d507b8f970d5d4f77628a4fb35426a603c7df867313fe
+```
+
+独立校验从镜像重新提取 `/boot/openvela/a733/Image`，其大小和 SHA-256 与构建
+产物完全相同；`e2fsck -fn` 和 `sgdisk -v` 均通过。构建脚本的 trap 也已恢复
+临时复制进官方环境的源码。WAPI 的真实扫描、连接和断开仍须刷写后验证。
+
+校验过程中发现并修复一个打包器问题：向已有镜像回写完整 ext4 分区时不能使用
+`dd conv=sparse`，否则新分区中的零块不会覆盖基底镜像的旧字节。两个相关打包
+脚本现已使用完整 `conv=notrunc` 回写，并在写入前逐字节比较嵌入内核。
