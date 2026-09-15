@@ -9,6 +9,7 @@
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define GGUF_MAGIC UINT32_C(0x46554747)
@@ -29,6 +30,8 @@
 #define TOKEN_KEY_MAX 256
 #define TOKEN_VALUE_MAX 64
 #define TOKEN_LENGTH_LIMIT (1024 * 1024)
+#define TOKEN_DECODE_MAX_IDS 64
+#define TOKEN_PIECE_MAX 512
 
 struct tokenizer_info_s
 {
@@ -467,12 +470,333 @@ out:
   return ret;
 }
 
+static int utf8_codepoint(const uint8_t *text, size_t length,
+                          size_t *used, uint32_t *codepoint)
+{
+  uint32_t value;
+  size_t count;
+  size_t index;
+
+  if (length == 0)
+    {
+      return -EINVAL;
+    }
+
+  if (text[0] < 0x80)
+    {
+      *used = 1;
+      *codepoint = text[0];
+      return 0;
+    }
+
+  if ((text[0] & 0xe0) == 0xc0)
+    {
+      value = text[0] & 0x1f;
+      count = 2;
+    }
+  else if ((text[0] & 0xf0) == 0xe0)
+    {
+      value = text[0] & 0x0f;
+      count = 3;
+    }
+  else if ((text[0] & 0xf8) == 0xf0)
+    {
+      value = text[0] & 0x07;
+      count = 4;
+    }
+  else
+    {
+      return -EINVAL;
+    }
+
+  if (count > length)
+    {
+      return -EINVAL;
+    }
+
+  for (index = 1; index < count; index++)
+    {
+      if ((text[index] & 0xc0) != 0x80)
+        {
+          return -EINVAL;
+        }
+
+      value = (value << 6) | (text[index] & 0x3f);
+    }
+
+  if ((count == 2 && value < 0x80) ||
+      (count == 3 && value < 0x800) ||
+      (count == 4 && value < 0x10000) ||
+      value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff))
+    {
+      return -EINVAL;
+    }
+
+  *used = count;
+  *codepoint = value;
+  return 0;
+}
+
+static int gpt2_codepoint_to_byte(uint32_t codepoint, uint8_t *byte)
+{
+  unsigned int candidate;
+  uint32_t replacement = 256;
+
+  if ((codepoint >= 0x21 && codepoint <= 0x7e) ||
+      (codepoint >= 0xa1 && codepoint <= 0xac) ||
+      (codepoint >= 0xae && codepoint <= 0xff))
+    {
+      *byte = (uint8_t)codepoint;
+      return 0;
+    }
+
+  for (candidate = 0; candidate < 256; candidate++)
+    {
+      if ((candidate >= 0x21 && candidate <= 0x7e) ||
+          (candidate >= 0xa1 && candidate <= 0xac) ||
+          (candidate >= 0xae && candidate <= 0xff))
+        {
+          continue;
+        }
+
+      if (replacement == codepoint)
+        {
+          *byte = (uint8_t)candidate;
+          return 0;
+        }
+
+      replacement++;
+    }
+
+  return -EINVAL;
+}
+
+static int decode_piece(const uint8_t *piece, size_t piece_length,
+                        uint8_t *output, size_t capacity, size_t *written)
+{
+  size_t input_offset = 0;
+  size_t output_offset = 0;
+
+  while (input_offset < piece_length)
+    {
+      uint32_t codepoint;
+      size_t used;
+      uint8_t byte;
+
+      if (utf8_codepoint(piece + input_offset, piece_length - input_offset,
+                         &used, &codepoint) < 0 ||
+          gpt2_codepoint_to_byte(codepoint, &byte) < 0 ||
+          output_offset == capacity)
+        {
+          return -EINVAL;
+        }
+
+      output[output_offset++] = byte;
+      input_offset += used;
+    }
+
+  *written = output_offset;
+  return 0;
+}
+
+int aipetllm_decode_checkpoint(const char *path, int id_count,
+                               char *const id_text[])
+{
+  uint8_t *pieces = NULL;
+  size_t lengths[TOKEN_DECODE_MAX_IDS];
+  uint64_t ids[TOKEN_DECODE_MAX_IDS];
+  uint8_t *decoded = NULL;
+  uint64_t metadata_count;
+  uint64_t tensor_count;
+  uint32_t version;
+  uint32_t magic;
+  FILE *stream;
+  uint64_t index;
+  uint64_t vocab = 0;
+  size_t decoded_length = 0;
+  int ret = 1;
+  int item;
+
+  if (id_count <= 0 || id_count > TOKEN_DECODE_MAX_IDS)
+    {
+      fprintf(stderr, "aipetllm: decode requires 1..%d token IDs\n",
+              TOKEN_DECODE_MAX_IDS);
+      return 1;
+    }
+
+  memset(lengths, 0, sizeof(lengths));
+  for (item = 0; item < id_count; item++)
+    {
+      char *end;
+      unsigned long value = strtoul(id_text[item], &end, 10);
+
+      if (end == id_text[item] || *end != '\0' || value > UINT32_MAX)
+        {
+          fprintf(stderr, "aipetllm: invalid token ID '%s'\n", id_text[item]);
+          return 1;
+        }
+
+      ids[item] = value;
+    }
+
+  pieces = calloc((size_t)id_count, TOKEN_PIECE_MAX);
+  decoded = malloc((size_t)id_count * TOKEN_PIECE_MAX);
+  if (pieces == NULL || decoded == NULL)
+    {
+      fputs("aipetllm: decode cannot allocate piece buffers\n", stderr);
+      free(decoded);
+      free(pieces);
+      return 1;
+    }
+
+  stream = fopen(path, "rb");
+  if (stream == NULL)
+    {
+      fprintf(stderr, "aipetllm: decode cannot open %s: %d (%s)\n",
+              path, errno, strerror(errno));
+      free(decoded);
+      free(pieces);
+      return 1;
+    }
+
+  if (read_exact(stream, &magic, sizeof(magic)) < 0 ||
+      read_exact(stream, &version, sizeof(version)) < 0 ||
+      read_exact(stream, &tensor_count, sizeof(tensor_count)) < 0 ||
+      read_exact(stream, &metadata_count, sizeof(metadata_count)) < 0 ||
+      magic != GGUF_MAGIC || version < 2 || version > 3)
+    {
+      fputs("aipetllm: decode invalid GGUF header\n", stderr);
+      goto out;
+    }
+
+  for (index = 0; index < metadata_count; index++)
+    {
+      char key[TOKEN_KEY_MAX];
+      uint64_t key_length;
+      uint32_t type;
+
+      if (read_string(stream, key, sizeof(key), &key_length) < 0 ||
+          key_length >= sizeof(key) ||
+          read_exact(stream, &type, sizeof(type)) < 0)
+        {
+          fputs("aipetllm: decode malformed metadata\n", stderr);
+          goto out;
+        }
+
+      if (strcmp(key, "tokenizer.ggml.tokens") == 0 &&
+          type == GGUF_TYPE_ARRAY)
+        {
+          uint32_t element_type;
+          uint64_t token;
+
+          if (read_exact(stream, &element_type, sizeof(element_type)) < 0 ||
+              read_exact(stream, &vocab, sizeof(vocab)) < 0 ||
+              element_type != GGUF_TYPE_STRING)
+            {
+              fputs("aipetllm: decode invalid token array\n", stderr);
+              goto out;
+            }
+
+          for (token = 0; token < vocab; token++)
+            {
+              uint64_t length;
+              int wanted = -1;
+
+              if (read_exact(stream, &length, sizeof(length)) < 0 ||
+                  length >= TOKEN_PIECE_MAX)
+                {
+                  fputs("aipetllm: decode token is malformed/too large\n",
+                        stderr);
+                  goto out;
+                }
+
+              for (item = 0; item < id_count; item++)
+                {
+                  if (ids[item] == token)
+                    {
+                      wanted = item;
+                      break;
+                    }
+                }
+
+              if (wanted >= 0)
+                {
+                  if (read_exact(stream,
+                                 pieces + (size_t)wanted * TOKEN_PIECE_MAX,
+                                 (size_t)length) < 0)
+                    {
+                      goto out;
+                    }
+
+                  lengths[wanted] = (size_t)length;
+                }
+              else if (skip_exact(stream, length) < 0)
+                {
+                  goto out;
+                }
+            }
+        }
+      else if (skip_value(stream, type, 0) < 0)
+        {
+          fprintf(stderr, "aipetllm: decode invalid key=%s\n", key);
+          goto out;
+        }
+    }
+
+  if (vocab == 0)
+    {
+      fputs("aipetllm: decode token array not found\n", stderr);
+      goto out;
+    }
+
+  for (item = 0; item < id_count; item++)
+    {
+      size_t written;
+
+      if (ids[item] >= vocab ||
+          decode_piece(pieces + (size_t)item * TOKEN_PIECE_MAX,
+                       lengths[item],
+                       decoded + decoded_length,
+                       (size_t)id_count * TOKEN_PIECE_MAX - decoded_length,
+                       &written) < 0)
+        {
+          fprintf(stderr, "aipetllm: cannot decode token ID=%" PRIu64 "\n",
+                  ids[item]);
+          goto out;
+        }
+
+      printf("token[%" PRIu64 "] piece-bytes=%lu decoded-bytes=%lu\n",
+             ids[item], (unsigned long)lengths[item],
+             (unsigned long)written);
+      decoded_length += written;
+    }
+
+  printf("decoded-bytes=%lu text='", (unsigned long)decoded_length);
+  fwrite(decoded, 1, decoded_length, stdout);
+  puts("'");
+  puts("Qwen2 token-to-piece byte decode checkpoint passed; encoding pending.");
+  ret = 0;
+
+out:
+  fclose(stream);
+  free(decoded);
+  free(pieces);
+  return ret;
+}
+
 #ifdef AIPETLLM_TOKENCHECK_STANDALONE
 int main(int argc, char **argv)
 {
+  if (argc >= 4 && strcmp(argv[1], "--decode") == 0)
+    {
+      return aipetllm_decode_checkpoint(argv[2], argc - 3, &argv[3]);
+    }
+
   if (argc != 2)
     {
-      fprintf(stderr, "usage: %s MODEL.gguf\n", argv[0]);
+      fprintf(stderr, "usage: %s MODEL.gguf\n"
+                      "       %s --decode MODEL.gguf ID [ID ...]\n",
+              argv[0], argv[0]);
       return 2;
     }
 

@@ -49,6 +49,8 @@ extern int aipetllm_cxx_checkpoint(void);
 extern int aipetllm_ggml_quant_checkpoint(void);
 extern int aipetllm_model_checkpoint(const char *path);
 extern int aipetllm_tokenizer_checkpoint(const char *path);
+extern int aipetllm_decode_checkpoint(const char *path, int id_count,
+                                      char *const id_text[]);
 
 static const char *file_type(mode_t mode)
 {
@@ -593,6 +595,7 @@ static void usage(void)
   puts("  aipetllm gguf [model.gguf]");
   puts("  aipetllm modelcheck [model.gguf]");
   puts("  aipetllm tokencheck [model.gguf]");
+  puts("  aipetllm decode model.gguf token-id [token-id ...]");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
 
@@ -642,6 +645,11 @@ int main(int argc, char **argv)
   if ((argc == 2 || argc == 3) && strcmp(argv[1], "tokencheck") == 0)
     {
       return aipetllm_tokenizer_checkpoint(argc == 3 ? argv[2] : MODEL_DEFAULT);
+    }
+
+  if (argc >= 4 && strcmp(argv[1], "decode") == 0)
+    {
+      return aipetllm_decode_checkpoint(argv[2], argc - 3, &argv[3]);
     }
 
   if ((argc == 2 || argc == 3) && strcmp(argv[1], "pathcheck") == 0)
