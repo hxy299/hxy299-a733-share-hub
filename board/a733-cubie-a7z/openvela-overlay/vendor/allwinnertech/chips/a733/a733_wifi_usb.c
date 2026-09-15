@@ -127,6 +127,7 @@
 #define A733_AIC_TASK_DBG          1u
 #define A733_AIC_DRIVER_TASK       100u
 #define A733_AIC_USB_TYPE_CMD      0x11u
+#define A733_AIC_USB_TYPE_DATA_CFM 0x12u
 #define A733_AIC_CHIP_ID_ADDR      UINT32_C(0x40500000)
 #define A733_AIC_RUNTIME_PID       0x8d81u
 #define A733_AIC_MM_RESET_REQ      0u
@@ -268,6 +269,9 @@ struct a733_wifi_state_s
   bool wifi_data_in_toggle;
   bool wifi_msg_out_toggle;
   bool wifi_msg_in_toggle;
+  uint32_t wifi_msg_frames;
+  uint32_t wifi_data_confirmations;
+  uint32_t wifi_async_messages;
   uint32_t lmac_version;
   uint32_t machw_version1;
   uint32_t machw_version2;
@@ -389,6 +393,13 @@ struct a733_wifi_state_s
 
 static struct a733_wifi_state_s g_wifi;
 static mutex_t g_wifi_usb_lock = NXMUTEX_INITIALIZER;
+/* The runtime message endpoint carries both synchronous command replies and
+ * asynchronous TX confirmations/connection events.  The official Linux
+ * driver owns it with a dedicated RX queue.  Serialize it here so the
+ * lightweight background pump cannot steal a reply from scan/connect/key
+ * control transactions. */
+
+static mutex_t g_wifi_msg_lock = NXMUTEX_INITIALIZER;
 /* Protect descriptor construction as well as DMA.  The USB lock alone is
  * too late: DHCP announcements can overwrite a packet before bulk takes it.
  * Lock order: network (when held) -> data TX -> USB, never the reverse. */
@@ -1202,7 +1213,12 @@ static int a733_ehci_bulk_timeout(uint8_t devaddr, uint8_t endpoint,
           break;
         }
 
-      a733_delay_ms(1);
+      /* Runtime bulk I/O executes from schedulable task context.  A busy
+       * microsecond delay here made the always-on WLAN RX worker consume most
+       * of one CPU while an IN endpoint was NAKing, which progressively made
+       * NSH and service tasks appear frozen. */
+
+      nxsig_usleep(1000);
     }
 
   a733_ehci_async_stop(usbcmd, usbsts);
@@ -2227,6 +2243,12 @@ static int a733_wifi_lmac_exchange(uint16_t request_id,
       return -E2BIG;
     }
 
+  ret = nxmutex_lock(&g_wifi_msg_lock);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
   memset(g_wifi_aic_tx, 0, tx_length);
   a733_putle16(g_wifi_aic_tx, 12u + parameter_length);
   g_wifi_aic_tx[2] = A733_AIC_USB_TYPE_CMD;
@@ -2248,7 +2270,8 @@ static int a733_wifi_lmac_exchange(uint16_t request_id,
                        tx_length, &actual, &g_wifi.wifi_msg_out_toggle);
   if (ret < 0 || actual != tx_length)
     {
-      return ret < 0 ? ret : -EIO;
+      ret = ret < 0 ? ret : -EIO;
+      goto out;
     }
 
   for (attempt = 0; attempt < 8; attempt++)
@@ -2259,7 +2282,15 @@ static int a733_wifi_lmac_exchange(uint16_t request_id,
                            &g_wifi.wifi_msg_in_toggle);
       if (ret < 0)
         {
-          return ret;
+          goto out;
+        }
+
+      g_wifi.wifi_msg_frames++;
+      if (actual >= 3 &&
+          (g_wifi_aic_rx[2] & 0x7fu) == A733_AIC_USB_TYPE_DATA_CFM)
+        {
+          g_wifi.wifi_data_confirmations++;
+          continue;
         }
 
       if (actual < 16 || (g_wifi_aic_rx[2] & 0x7fu) !=
@@ -2272,7 +2303,8 @@ static int a733_wifi_lmac_exchange(uint16_t request_id,
       param_len = a733_getle16(g_wifi_aic_rx + 10);
       if (actual < 16u + param_len || param_len > confirmation_size)
         {
-          return -EPROTO;
+          ret = -EPROTO;
+          goto out;
         }
 
       if (param_len > 0 && confirmation != NULL)
@@ -2281,10 +2313,15 @@ static int a733_wifi_lmac_exchange(uint16_t request_id,
         }
 
       *confirmation_length = param_len;
-      return OK;
+      ret = OK;
+      goto out;
     }
 
-  return -EPROTO;
+  ret = -EPROTO;
+
+out:
+  nxmutex_unlock(&g_wifi_msg_lock);
+  return ret;
 }
 
 static int a733_wifi_stack_start(void)
@@ -2923,11 +2960,17 @@ static int a733_wifi_scan_once(enum a733_wifi_scan_mode_e mode)
   request[369] = 0;
   a733_putle32(request + 372, 0);
 
+  ret = nxmutex_lock(&g_wifi_msg_lock);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
   ret = a733_wifi_lmac_send(A733_AIC_SCANU_START_REQ,
                              request, sizeof(request));
   if (ret < 0)
     {
-      return ret;
+      goto out;
     }
 
   for (index = 0; index < 96 && idle < 12; index++)
@@ -2947,10 +2990,18 @@ static int a733_wifi_scan_once(enum a733_wifi_scan_mode_e mode)
 
       if (ret < 0)
         {
-          return ret;
+          goto out;
         }
 
       idle = 0;
+      g_wifi.wifi_msg_frames++;
+      if (actual >= 3 &&
+          (g_wifi_aic_rx[2] & 0x7fu) == A733_AIC_USB_TYPE_DATA_CFM)
+        {
+          g_wifi.wifi_data_confirmations++;
+          continue;
+        }
+
       if (actual < 16 || (g_wifi_aic_rx[2] & 0x7fu) !=
                          A733_AIC_USB_TYPE_CMD)
         {
@@ -2989,7 +3040,8 @@ static int a733_wifi_scan_once(enum a733_wifi_scan_mode_e mode)
 
           if (status != 0)
             {
-              return -EIO;
+              ret = -EIO;
+              goto out;
             }
 
           syslog(LOG_INFO,
@@ -2998,11 +3050,16 @@ static int a733_wifi_scan_once(enum a733_wifi_scan_mode_e mode)
                  channel_count, g_wifi.scan_result_messages,
                  g_wifi.scan_count, g_wifi.scan_firmware_count,
                  g_wifi.scan_acknowledged);
-          return OK;
+          ret = OK;
+          goto out;
         }
     }
 
-  return -ETIMEDOUT;
+  ret = -ETIMEDOUT;
+
+out:
+  nxmutex_unlock(&g_wifi_msg_lock);
+  return ret;
 }
 
 /* A single large dual-band request is unreliable on D80-U02: firmware can
@@ -3337,11 +3394,17 @@ static int a733_wifi_associate(unsigned int result_index)
   memset(g_wifi.associated_bssid, 0, sizeof(g_wifi.associated_bssid));
   memset(g_wifi.associated_ssid, 0, sizeof(g_wifi.associated_ssid));
 
+  ret = nxmutex_lock(&g_wifi_msg_lock);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
   ret = a733_wifi_lmac_send(A733_AIC_SM_CONNECT_REQ,
                             request, sizeof(request));
   if (ret < 0)
     {
-      return ret;
+      goto out;
     }
 
   for (attempt = 0; attempt < 128 && idle < 24; attempt++)
@@ -3361,10 +3424,18 @@ static int a733_wifi_associate(unsigned int result_index)
 
       if (ret < 0)
         {
-          return ret;
+          goto out;
         }
 
       idle = 0;
+      g_wifi.wifi_msg_frames++;
+      if (actual >= 3 &&
+          (g_wifi_aic_rx[2] & 0x7fu) == A733_AIC_USB_TYPE_DATA_CFM)
+        {
+          g_wifi.wifi_data_confirmations++;
+          continue;
+        }
+
       if (actual < 16 || (g_wifi_aic_rx[2] & 0x7fu) !=
                          A733_AIC_USB_TYPE_CMD)
         {
@@ -3382,21 +3453,24 @@ static int a733_wifi_associate(unsigned int result_index)
         {
           if (parameter_length < 1)
             {
-              return -EPROTO;
+              ret = -EPROTO;
+              goto out;
             }
 
           g_wifi.association_cfm_status = g_wifi_aic_rx[16];
           got_cfm = true;
           if (g_wifi.association_cfm_status != 0)
             {
-              return -EBUSY;
+              ret = -EBUSY;
+              goto out;
             }
         }
       else if (message_id == A733_AIC_SM_CONNECT_IND)
         {
           if (parameter_length < 18 || !got_cfm)
             {
-              return -EPROTO;
+              ret = -EPROTO;
+              goto out;
             }
 
           g_wifi.association_status_code =
@@ -3407,7 +3481,8 @@ static int a733_wifi_associate(unsigned int result_index)
           g_wifi.association_channel = g_wifi_aic_rx[27];
           if (g_wifi.association_status_code != 0)
             {
-              return -ECONNREFUSED;
+              ret = -ECONNREFUSED;
+              goto out;
             }
 
           g_wifi.associated = true;
@@ -3422,7 +3497,8 @@ static int a733_wifi_associate(unsigned int result_index)
                  g_wifi.associated_ssid, g_wifi.association_vif,
                  g_wifi.association_ap, g_wifi.association_channel,
                  result->assoc_ie_length > 0);
-          return OK;
+          ret = OK;
+          goto out;
         }
       else if (message_id == A733_AIC_SM_DISCONNECT_IND)
         {
@@ -3441,7 +3517,11 @@ static int a733_wifi_associate(unsigned int result_index)
         }
     }
 
-  return -ETIMEDOUT;
+  ret = -ETIMEDOUT;
+
+out:
+  nxmutex_unlock(&g_wifi_msg_lock);
+  return ret;
 }
 
 static int a733_wifi_disconnect(void)
@@ -3460,11 +3540,17 @@ static int a733_wifi_disconnect(void)
   g_wifi.disconnect_indicated = false;
   g_wifi.disconnect_reason = 0xffff;
 
+  ret = nxmutex_lock(&g_wifi_msg_lock);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
   ret = a733_wifi_lmac_send(A733_AIC_SM_DISCONNECT_REQ,
                             request, sizeof(request));
   if (ret < 0)
     {
-      return ret;
+      goto out;
     }
 
   /* A successful CFM only means that firmware accepted the request.  The
@@ -3490,10 +3576,18 @@ static int a733_wifi_disconnect(void)
 
       if (ret < 0)
         {
-          return ret;
+          goto out;
         }
 
       idle = 0;
+      g_wifi.wifi_msg_frames++;
+      if (actual >= 3 &&
+          (g_wifi_aic_rx[2] & 0x7fu) == A733_AIC_USB_TYPE_DATA_CFM)
+        {
+          g_wifi.wifi_data_confirmations++;
+          continue;
+        }
+
       if (actual < 16 || (g_wifi_aic_rx[2] & 0x7fu) !=
                          A733_AIC_USB_TYPE_CMD)
         {
@@ -3515,7 +3609,8 @@ static int a733_wifi_disconnect(void)
         {
           if (parameter_length < 3)
             {
-              return -EPROTO;
+              ret = -EPROTO;
+              goto out;
             }
 
           g_wifi.disconnect_reason = a733_getle16(g_wifi_aic_rx + 16);
@@ -3539,11 +3634,16 @@ static int a733_wifi_disconnect(void)
            */
 
           up_mdelay(100);
-          return OK;
+          ret = OK;
+          goto out;
         }
     }
 
-  return -ETIMEDOUT;
+  ret = -ETIMEDOUT;
+
+out:
+  nxmutex_unlock(&g_wifi_msg_lock);
+  return ret;
 }
 
 /* Receive and decode one firmware WLAN data indication.  The D80 USB data
@@ -5067,14 +5167,103 @@ static void a733_wifi_net_receive(void)
     }
 }
 
+/* Drain the dedicated runtime message endpoint while the data path is live.
+ * FCU760K returns USB_TYPE_CFG_DATA_CFM for transmitted WLAN packets and can
+ * also deliver unsolicited disconnect indications here.  Leaving these
+ * packets queued eventually exhausts firmware message flow control and makes
+ * data, scan and association all appear to hang although the USB root port is
+ * still connected.  This is the polling equivalent of the official driver's
+ * permanently submitted message RX URBs.
+ */
+
+static int a733_wifi_message_poll(unsigned int timeout_ms)
+{
+  bool carrier_off = false;
+  uint16_t message_id;
+  uint16_t parameter_length;
+  uint8_t type;
+  size_t actual;
+  int ret;
+
+  ret = nxmutex_trylock(&g_wifi_msg_lock);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  ret = a733_ehci_bulk_timeout(g_wifi.address, g_wifi.wifi_msg_in,
+                               g_wifi.runtime_maxpacket, true,
+                               g_wifi_aic_rx, sizeof(g_wifi_aic_rx),
+                               &actual, &g_wifi.wifi_msg_in_toggle,
+                               timeout_ms);
+  if (ret < 0)
+    {
+      nxmutex_unlock(&g_wifi_msg_lock);
+      return ret;
+    }
+
+  g_wifi.wifi_msg_frames++;
+  type = actual >= 3 ? g_wifi_aic_rx[2] & 0x7fu : 0;
+  if (type == A733_AIC_USB_TYPE_DATA_CFM)
+    {
+      g_wifi.wifi_data_confirmations++;
+    }
+  else if (type == A733_AIC_USB_TYPE_CMD && actual >= 16)
+    {
+      message_id = a733_getle16(g_wifi_aic_rx + 4);
+      parameter_length = a733_getle16(g_wifi_aic_rx + 10);
+      g_wifi.wifi_async_messages++;
+
+      if (message_id == A733_AIC_SM_DISCONNECT_IND &&
+          parameter_length >= 3 && actual >= 16u + parameter_length)
+        {
+          g_wifi.disconnect_reason = a733_getle16(g_wifi_aic_rx + 16);
+          g_wifi.disconnect_indicated = true;
+          g_wifi.associated = false;
+          g_wifi.wpa_port_open = false;
+          g_wifi.wpa_pairwise_installed = false;
+          g_wifi.wpa_group_installed = false;
+          g_wifi.wpa_checkpoint = -ENETDOWN;
+          g_wifi.wpa_state = A733_WPA_WAIT_M1;
+          carrier_off = true;
+        }
+    }
+
+  nxmutex_unlock(&g_wifi_msg_lock);
+
+  if (carrier_off)
+    {
+      a733_wifi_net_carrier(false);
+      syslog(LOG_WARNING,
+             "A733 WIFI: asynchronous disconnect reason=%u; carrier off\n",
+             g_wifi.disconnect_reason);
+    }
+
+  return OK;
+}
+
 static int a733_wifi_rx_thread(int argc, char *argv[])
 {
   struct a733_wifi_netdev_s *priv = &g_wifi_netdev;
+  unsigned int message_tick = 0;
   unsigned int timeout_ms;
   int ret;
 
   for (;;)
     {
+      /* DATA_CFM is expected after every data OUT.  Drain it immediately;
+       * also sample the message endpoint periodically for unsolicited link
+       * events.  trylock keeps synchronous WAPI commands as the sole owner
+       * of their confirmations.
+       */
+
+      if (g_wifi.wifi_data_confirmations < g_wifi.data_tx_frames ||
+          ++message_tick >= 64)
+        {
+          a733_wifi_message_poll(1);
+          message_tick = 0;
+        }
+
       if (!priv->ifup || !g_wifi.associated)
         {
           nxsig_usleep(50000);
@@ -5322,10 +5511,12 @@ static ssize_t a733_wifi_read(struct file *filep, char *buffer,
         "stack: checkpoint=%d 5g=%u vendor=%02x "
         "mac=%02x:%02x:%02x:%02x:%02x:%02x\n"
         "rf: checkpoint=%d rx=%08lx/%08lx tx=%08lx/%08lx\n"
-        "me: checkpoint=%d profile=HT40/PS\n"
+        "me: checkpoint=%d profile=HT40/PS-off\n"
         "regulatory: checkpoint=%d domain=CN channels=%u/%u\n"
         "station: checkpoint=%d vif=%u mac-start=%d host-netdev="
         A733_WIFI_HOST_NETDEV "\n"
+        "msg-rx: frames=%lu data-cfm=%lu async=%lu "
+        "pump=serialized-background\n"
         "scan: checkpoint=%d results=%u indications=%u firmware=%u ack=%u "
         "last=%04x status=%u "
         "control='echo scanall|scan2|scan5|scandfs > /dev/a733-wifi'\n"
@@ -5385,6 +5576,9 @@ static ssize_t a733_wifi_read(struct file *filep, char *buffer,
         g_wifi.channel_config, g_wifi.channel_2g_count,
         g_wifi.channel_5g_count,
         g_wifi.station_vif, g_wifi.station_vif_index, g_wifi.mac_start,
+        (unsigned long)g_wifi.wifi_msg_frames,
+        (unsigned long)g_wifi.wifi_data_confirmations,
+        (unsigned long)g_wifi.wifi_async_messages,
         g_wifi.scan_checkpoint, g_wifi.scan_count,
         g_wifi.scan_result_messages, g_wifi.scan_firmware_count,
         g_wifi.scan_acknowledged,
