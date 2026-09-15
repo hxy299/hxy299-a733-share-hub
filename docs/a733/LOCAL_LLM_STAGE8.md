@@ -54,6 +54,9 @@ NSH 必须整行输入：
 
 模型 Transformer graph、KV cache 和采样仍未执行。
 
+v74 已在 Cubie A7Z 上使用真实 1.5B 模型完成 encode/decode 闭环，记录见
+docs/a733/LOCAL_LLM_STAGE8_BOARD_TEST_20260915.md。
+
 ## 构建与镜像
 
 - ARM64 openvela 内核大小：1656120 字节

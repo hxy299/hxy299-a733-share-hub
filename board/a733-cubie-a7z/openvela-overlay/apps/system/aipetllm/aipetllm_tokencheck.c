@@ -774,7 +774,8 @@ int aipetllm_decode_checkpoint(const char *path, int id_count,
   printf("decoded-bytes=%lu text='", (unsigned long)decoded_length);
   fwrite(decoded, 1, decoded_length, stdout);
   puts("'");
-  puts("Qwen2 token-to-piece byte decode checkpoint passed; encoding pending.");
+  puts("Qwen2 token-to-piece byte decode checkpoint passed; "
+       "Transformer inference pending.");
   ret = 0;
 
 out:
