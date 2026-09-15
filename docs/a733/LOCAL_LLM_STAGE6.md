@@ -51,3 +51,6 @@ openvela 当前未提供的模型运行时能力，因此在 `aipetllm` 内移�
 宿主功能测试使用 llama.cpp 随附的 `ggml-vocab-qwen2.gguf`，成功识别 151936 个
 token、151387 条 merge、151936 个 token type，且特殊 token 索引检查通过。宿主
 样例通过只证明解析器逻辑正确，最终完成仍以开发板上的实际 1.5B 模型输出为准。
+
+实际 1.5B 模型的 v72 真机验证已经通过，完整输出见
+`docs/a733/LOCAL_LLM_STAGE6_BOARD_TEST_20260915.md`。
