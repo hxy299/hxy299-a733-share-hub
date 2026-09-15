@@ -18,6 +18,7 @@
 #define GGML_COMMON_DECL_C
 #include "ggml-common.h"
 #include "ggml-quants.h"
+#include "quants.h"
 
 #define GGUF_MAGIC UINT32_C(0x46554747)
 #define GGUF_TYPE_UINT8 0
@@ -658,10 +659,132 @@ out:
   return result;
 }
 
-int aipetllm_embedding_checkpoint(const char *path, uint32_t token_id)
+static int read_quantized_matvec(FILE *stream, uint64_t absolute_offset,
+                                 const struct tensor_info_s *tensor,
+                                 const float *input, float *output)
+{
+  uint64_t row_dimensions[1];
+  uint64_t row_bytes;
+  uint64_t rows;
+  void *packed = NULL;
+  block_q8_K *input_q8 = NULL;
+  uint64_t row;
+  int result = -EINVAL;
+
+  if (tensor->dimension_count != 2 || tensor->dimensions[0] == 0 ||
+      tensor->dimensions[0] > INT_MAX || tensor->dimensions[1] == 0 ||
+      tensor->dimensions[1] > 65536)
+    {
+      return -EINVAL;
+    }
+
+  row_dimensions[0] = tensor->dimensions[0];
+  rows = tensor->dimensions[1];
+  if (tensor_bytes(row_dimensions, 1, tensor->type, &row_bytes) < 0 ||
+      row_bytes == 0 || row_bytes > SIZE_MAX ||
+      rows > UINT64_MAX / row_bytes ||
+      absolute_offset > UINT64_MAX - rows * row_bytes ||
+      absolute_offset > (uint64_t)LONG_MAX)
+    {
+      return -EOVERFLOW;
+    }
+
+  packed = malloc((size_t)row_bytes);
+  if (packed == NULL)
+    {
+      return -ENOMEM;
+    }
+
+  if (tensor->type == GGML_TYPE_Q4_K ||
+      tensor->type == GGML_TYPE_Q6_K)
+    {
+      size_t blocks;
+
+      if (tensor->dimensions[0] % QK_K != 0)
+        {
+          result = -EINVAL;
+          goto out;
+        }
+
+      blocks = (size_t)(tensor->dimensions[0] / QK_K);
+      if (blocks > SIZE_MAX / sizeof(block_q8_K))
+        {
+          result = -EOVERFLOW;
+          goto out;
+        }
+
+      input_q8 = malloc(blocks * sizeof(block_q8_K));
+      if (input_q8 == NULL)
+        {
+          result = -ENOMEM;
+          goto out;
+        }
+
+      quantize_row_q8_K(input, input_q8,
+                        (int64_t)tensor->dimensions[0]);
+    }
+  else if (tensor->type != GGML_TYPE_F32)
+    {
+      result = -ENOTSUP;
+      goto out;
+    }
+
+  if (fseek(stream, (long)absolute_offset, SEEK_SET) != 0)
+    {
+      result = -errno;
+      goto out;
+    }
+
+  for (row = 0; row < rows; row++)
+    {
+      if (read_exact(stream, packed, (size_t)row_bytes) < 0)
+        {
+          result = -EIO;
+          goto out;
+        }
+
+      if (tensor->type == GGML_TYPE_Q4_K)
+        {
+          ggml_vec_dot_q4_K_q8_K((int)tensor->dimensions[0],
+                                 &output[row], 0, packed, 0,
+                                 input_q8, 0, 1);
+        }
+      else if (tensor->type == GGML_TYPE_Q6_K)
+        {
+          ggml_vec_dot_q6_K_q8_K((int)tensor->dimensions[0],
+                                 &output[row], 0, packed, 0,
+                                 input_q8, 0, 1);
+        }
+      else
+        {
+          const float *weights = packed;
+          double sum = 0.0;
+          uint64_t column;
+
+          for (column = 0; column < tensor->dimensions[0]; column++)
+            {
+              sum += (double)weights[column] * input[column];
+            }
+
+          output[row] = (float)sum;
+        }
+    }
+
+  result = 0;
+
+out:
+  free(input_q8);
+  free(packed);
+  return result;
+}
+
+static int embedding_pipeline_checkpoint(const char *path,
+                                         uint32_t token_id,
+                                         int project_q)
 {
   struct tensor_info_s *embedding = NULL;
   struct tensor_info_s *attention_norm = NULL;
+  struct tensor_info_s *attention_q = NULL;
   struct tensor_info_s *tensors = NULL;
   FILE *stream = NULL;
   uint64_t metadata_count;
@@ -674,6 +797,7 @@ int aipetllm_embedding_checkpoint(const char *path, uint32_t token_id)
   float *input = NULL;
   float *weight = NULL;
   float *normalized = NULL;
+  float *q_output = NULL;
   uint64_t index;
   double square_sum = 0.0;
   double output_sum = 0.0;
@@ -797,6 +921,10 @@ int aipetllm_embedding_checkpoint(const char *path, uint32_t token_id)
         {
           attention_norm = tensor;
         }
+      else if (strcmp(tensor->name, "blk.0.attn_q.weight") == 0)
+        {
+          attention_q = tensor;
+        }
     }
 
   {
@@ -821,6 +949,20 @@ int aipetllm_embedding_checkpoint(const char *path, uint32_t token_id)
       data_start > (uint64_t)LONG_MAX)
     {
       fputs("aipetllm: embed incompatible embedding/norm tensors\n", stderr);
+      goto out;
+    }
+
+  if (project_q &&
+      (attention_q == NULL || attention_q->dimension_count != 2 ||
+       attention_q->dimensions[0] != embedding->dimensions[0] ||
+       attention_q->dimensions[1] == 0 ||
+       attention_q->dimensions[1] > 65536 ||
+       (attention_q->type != GGML_TYPE_F32 &&
+        attention_q->type != GGML_TYPE_Q4_K &&
+        attention_q->type != GGML_TYPE_Q6_K) ||
+       data_start > UINT64_MAX - attention_q->offset))
+    {
+      fputs("aipetllm: qproj incompatible blk.0.attn_q.weight\n", stderr);
       goto out;
     }
 
@@ -893,11 +1035,70 @@ int aipetllm_embedding_checkpoint(const char *path, uint32_t token_id)
     }
 
   putchar('\n');
-  puts("Qwen2 token embedding and layer-0 RMSNorm checkpoint passed; "
-       "Q projection pending.");
+
+  if (!project_q)
+    {
+      puts("Qwen2 token embedding and layer-0 RMSNorm checkpoint passed; "
+           "Q projection pending.");
+      ret = 0;
+      goto out;
+    }
+
+  q_output = malloc((size_t)attention_q->dimensions[1] * sizeof(float));
+  if (q_output == NULL)
+    {
+      fputs("aipetllm: qproj output allocation failed\n", stderr);
+      goto out;
+    }
+
+  if (read_quantized_matvec(stream, data_start + attention_q->offset,
+                            attention_q, normalized, q_output) < 0)
+    {
+      fputs("aipetllm: qproj matrix-vector execution failed\n", stderr);
+      goto out;
+    }
+
+  output_sum = 0.0;
+  output_square_sum = 0.0;
+  for (index = 0; index < attention_q->dimensions[1]; index++)
+    {
+      float value = q_output[index];
+
+      output_sum += value;
+      output_square_sum += (double)value * value;
+      if (index == 0 || value < minimum)
+        {
+          minimum = value;
+        }
+
+      if (index == 0 || value > maximum)
+        {
+          maximum = value;
+        }
+    }
+
+  printf("qproj tensor=%s type=%s input=%" PRIu64 " output=%" PRIu64
+         " row-bytes=%" PRIu64 "\n",
+         attention_q->name, tensor_type_name(attention_q->type),
+         attention_q->dimensions[0], attention_q->dimensions[1],
+         attention_q->bytes / attention_q->dimensions[1]);
+  printf("q-crc=%08" PRIx32 " sum=%.9g l2=%.9g min=%.9g max=%.9g\n",
+         tensor_crc32(0, (const uint8_t *)q_output,
+                      (size_t)attention_q->dimensions[1] * sizeof(float)),
+         output_sum, sqrt(output_square_sum),
+         (double)minimum, (double)maximum);
+  printf("q[0..7]=");
+  for (index = 0; index < attention_q->dimensions[1] && index < 8; index++)
+    {
+      printf("%s%.7g", index == 0 ? "" : ",", (double)q_output[index]);
+    }
+
+  putchar('\n');
+  puts("Qwen2 layer-0 Q projection checkpoint passed; K/V and RoPE pending.");
   ret = 0;
 
 out:
+  free(q_output);
   free(normalized);
   free(weight);
   free(input);
@@ -908,4 +1109,14 @@ out:
     }
 
   return ret;
+}
+
+int aipetllm_embedding_checkpoint(const char *path, uint32_t token_id)
+{
+  return embedding_pipeline_checkpoint(path, token_id, 0);
+}
+
+int aipetllm_q_projection_checkpoint(const char *path, uint32_t token_id)
+{
+  return embedding_pipeline_checkpoint(path, token_id, 1);
 }
