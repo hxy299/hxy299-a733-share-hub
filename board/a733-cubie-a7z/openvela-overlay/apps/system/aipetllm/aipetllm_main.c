@@ -48,6 +48,7 @@ struct gguf_reader_s
 extern int aipetllm_cxx_checkpoint(void);
 extern int aipetllm_ggml_quant_checkpoint(void);
 extern int aipetllm_model_checkpoint(const char *path);
+extern int aipetllm_tokenizer_checkpoint(const char *path);
 
 static const char *file_type(mode_t mode)
 {
@@ -591,6 +592,7 @@ static void usage(void)
   puts("  aipetllm readcheck [model.gguf]");
   puts("  aipetllm gguf [model.gguf]");
   puts("  aipetllm modelcheck [model.gguf]");
+  puts("  aipetllm tokencheck [model.gguf]");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
 
@@ -635,6 +637,11 @@ int main(int argc, char **argv)
   if ((argc == 2 || argc == 3) && strcmp(argv[1], "modelcheck") == 0)
     {
       return aipetllm_model_checkpoint(argc == 3 ? argv[2] : MODEL_DEFAULT);
+    }
+
+  if ((argc == 2 || argc == 3) && strcmp(argv[1], "tokencheck") == 0)
+    {
+      return aipetllm_tokenizer_checkpoint(argc == 3 ? argv[2] : MODEL_DEFAULT);
     }
 
   if ((argc == 2 || argc == 3) && strcmp(argv[1], "pathcheck") == 0)

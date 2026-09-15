@@ -20,6 +20,7 @@ if(CONFIG_SYSTEM_AIPETLLM)
     aipetllm_cxx.cxx
     aipetllm_ggml_quant.c
     aipetllm_modelcheck.c
+    aipetllm_tokencheck.c
     ${AIPETLLM_GGML_SOURCES}
     STACKSIZE
     ${CONFIG_AIPETLLM_STACKSIZE}
