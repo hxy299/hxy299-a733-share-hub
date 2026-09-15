@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,6 +17,7 @@
 #include "ggml.h"
 #define GGML_COMMON_DECL_C
 #include "ggml-common.h"
+#include "ggml-quants.h"
 
 #define GGUF_MAGIC UINT32_C(0x46554747)
 #define GGUF_TYPE_UINT8 0
@@ -565,6 +567,340 @@ int aipetllm_model_checkpoint(const char *path)
   ret = 0;
 
 out:
+  free(tensors);
+  if (stream != NULL)
+    {
+      fclose(stream);
+    }
+
+  return ret;
+}
+
+static uint32_t tensor_crc32(uint32_t crc, const uint8_t *data, size_t length)
+{
+  size_t index;
+
+  crc = ~crc;
+  for (index = 0; index < length; index++)
+    {
+      unsigned int bit;
+
+      crc ^= data[index];
+      for (bit = 0; bit < 8; bit++)
+        {
+          crc = (crc >> 1) ^ (UINT32_C(0xedb88320) &
+                              (uint32_t)-(int32_t)(crc & 1));
+        }
+    }
+
+  return ~crc;
+}
+
+static int read_dequantized_row(FILE *stream, uint64_t absolute_offset,
+                                const struct tensor_info_s *tensor,
+                                uint64_t row, float *output)
+{
+  uint64_t row_bytes;
+  uint64_t row_dimensions[1];
+  void *packed;
+  int result = -EINVAL;
+
+  row_dimensions[0] = tensor->dimensions[0];
+  if (tensor->dimension_count < 1 ||
+      tensor_bytes(row_dimensions, 1, tensor->type, &row_bytes) < 0 ||
+      row > UINT64_MAX / row_bytes ||
+      absolute_offset > UINT64_MAX - row * row_bytes ||
+      absolute_offset + row * row_bytes > (uint64_t)LONG_MAX)
+    {
+      return -EOVERFLOW;
+    }
+
+  if (fseek(stream, (long)(absolute_offset + row * row_bytes), SEEK_SET) != 0)
+    {
+      return -errno;
+    }
+
+  packed = malloc((size_t)row_bytes);
+  if (packed == NULL)
+    {
+      return -ENOMEM;
+    }
+
+  if (read_exact(stream, packed, (size_t)row_bytes) < 0)
+    {
+      result = -EIO;
+      goto out;
+    }
+
+  switch (tensor->type)
+    {
+      case GGML_TYPE_F32:
+        memcpy(output, packed, (size_t)tensor->dimensions[0] * sizeof(float));
+        result = 0;
+        break;
+      case GGML_TYPE_Q4_K:
+        dequantize_row_q4_K((const block_q4_K *)packed, output,
+                            (int64_t)tensor->dimensions[0]);
+        result = 0;
+        break;
+      case GGML_TYPE_Q6_K:
+        dequantize_row_q6_K((const block_q6_K *)packed, output,
+                            (int64_t)tensor->dimensions[0]);
+        result = 0;
+        break;
+      default:
+        result = -ENOTSUP;
+        break;
+    }
+
+out:
+  free(packed);
+  return result;
+}
+
+int aipetllm_embedding_checkpoint(const char *path, uint32_t token_id)
+{
+  struct tensor_info_s *embedding = NULL;
+  struct tensor_info_s *attention_norm = NULL;
+  struct tensor_info_s *tensors = NULL;
+  FILE *stream = NULL;
+  uint64_t metadata_count;
+  uint64_t tensor_count;
+  uint64_t data_start;
+  uint32_t alignment = 32;
+  uint32_t version;
+  uint32_t magic;
+  float epsilon = 1.0e-6f;
+  float *input = NULL;
+  float *weight = NULL;
+  float *normalized = NULL;
+  uint64_t index;
+  double square_sum = 0.0;
+  double output_sum = 0.0;
+  double output_square_sum = 0.0;
+  float inverse_rms;
+  float minimum = 0.0f;
+  float maximum = 0.0f;
+  int ret = 1;
+
+  stream = fopen(path, "rb");
+  if (stream == NULL)
+    {
+      fprintf(stderr, "aipetllm: embed cannot open %s: %d (%s)\n",
+              path, errno, strerror(errno));
+      return 1;
+    }
+
+  if (read_exact(stream, &magic, sizeof(magic)) < 0 ||
+      read_exact(stream, &version, sizeof(version)) < 0 ||
+      read_exact(stream, &tensor_count, sizeof(tensor_count)) < 0 ||
+      read_exact(stream, &metadata_count, sizeof(metadata_count)) < 0 ||
+      magic != GGUF_MAGIC || version < 2 || version > 3 ||
+      tensor_count == 0 || tensor_count > GGUF_TENSOR_LIMIT)
+    {
+      fputs("aipetllm: embed invalid GGUF header\n", stderr);
+      goto out;
+    }
+
+  for (index = 0; index < metadata_count; index++)
+    {
+      char key[GGUF_KEY_MAX];
+      uint64_t key_length;
+      uint32_t type;
+
+      if (read_string(stream, key, sizeof(key), &key_length) < 0 ||
+          key_length >= sizeof(key) ||
+          read_exact(stream, &type, sizeof(type)) < 0)
+        {
+          fputs("aipetllm: embed malformed metadata\n", stderr);
+          goto out;
+        }
+
+      if (strcmp(key, "general.alignment") == 0 &&
+          type == GGUF_TYPE_UINT32)
+        {
+          if (read_exact(stream, &alignment, sizeof(alignment)) < 0)
+            {
+              goto out;
+            }
+        }
+      else if (strcmp(key,
+                      "qwen2.attention.layer_norm_rms_epsilon") == 0 &&
+               type == GGUF_TYPE_FLOAT32)
+        {
+          if (read_exact(stream, &epsilon, sizeof(epsilon)) < 0)
+            {
+              goto out;
+            }
+        }
+      else if (skip_value(stream, type, 0) < 0)
+        {
+          goto out;
+        }
+    }
+
+  if (alignment == 0 || (alignment & (alignment - 1)) != 0 ||
+      alignment > 4096 || !isfinite(epsilon) ||
+      epsilon <= 0.0f || epsilon > 0.01f)
+    {
+      fprintf(stderr, "aipetllm: embed unsafe alignment/epsilon %" PRIu32
+                      "/%.9g\n", alignment, (double)epsilon);
+      goto out;
+    }
+
+  tensors = calloc((size_t)tensor_count, sizeof(*tensors));
+  if (tensors == NULL)
+    {
+      fputs("aipetllm: embed tensor directory allocation failed\n", stderr);
+      goto out;
+    }
+
+  for (index = 0; index < tensor_count; index++)
+    {
+      struct tensor_info_s *tensor = &tensors[index];
+      uint64_t name_length;
+      uint32_t dimension;
+
+      if (read_string(stream, tensor->name, sizeof(tensor->name),
+                      &name_length) < 0 ||
+          name_length >= sizeof(tensor->name) ||
+          read_exact(stream, &tensor->dimension_count,
+                     sizeof(tensor->dimension_count)) < 0 ||
+          tensor->dimension_count == 0 ||
+          tensor->dimension_count > GGUF_DIMS_MAX)
+        {
+          goto out;
+        }
+
+      for (dimension = 0; dimension < tensor->dimension_count; dimension++)
+        {
+          if (read_exact(stream, &tensor->dimensions[dimension],
+                         sizeof(uint64_t)) < 0)
+            {
+              goto out;
+            }
+        }
+
+      if (read_exact(stream, &tensor->type, sizeof(tensor->type)) < 0 ||
+          read_exact(stream, &tensor->offset, sizeof(tensor->offset)) < 0 ||
+          tensor_bytes(tensor->dimensions, tensor->dimension_count,
+                       tensor->type, &tensor->bytes) < 0)
+        {
+          goto out;
+        }
+
+      if (strcmp(tensor->name, "token_embd.weight") == 0)
+        {
+          embedding = tensor;
+        }
+      else if (strcmp(tensor->name, "blk.0.attn_norm.weight") == 0)
+        {
+          attention_norm = tensor;
+        }
+    }
+
+  {
+    long position = ftell(stream);
+    if (position < 0)
+      {
+        goto out;
+      }
+
+    data_start = ((uint64_t)position + alignment - 1) &
+                 ~(uint64_t)(alignment - 1);
+  }
+
+  if (embedding == NULL || attention_norm == NULL ||
+      embedding->dimension_count != 2 ||
+      attention_norm->dimension_count != 1 ||
+      embedding->dimensions[0] == 0 ||
+      embedding->dimensions[0] != attention_norm->dimensions[0] ||
+      embedding->dimensions[0] > 65536 ||
+      token_id >= embedding->dimensions[1] ||
+      attention_norm->type != GGML_TYPE_F32 ||
+      data_start > (uint64_t)LONG_MAX)
+    {
+      fputs("aipetllm: embed incompatible embedding/norm tensors\n", stderr);
+      goto out;
+    }
+
+  input = malloc((size_t)embedding->dimensions[0] * sizeof(float));
+  weight = malloc((size_t)embedding->dimensions[0] * sizeof(float));
+  normalized = malloc((size_t)embedding->dimensions[0] * sizeof(float));
+  if (input == NULL || weight == NULL || normalized == NULL)
+    {
+      fputs("aipetllm: embed vector allocation failed\n", stderr);
+      goto out;
+    }
+
+  if (read_dequantized_row(stream, data_start + embedding->offset,
+                           embedding, token_id, input) < 0 ||
+      read_dequantized_row(stream, data_start + attention_norm->offset,
+                           attention_norm, 0, weight) < 0)
+    {
+      fputs("aipetllm: embed tensor row read/dequantize failed\n", stderr);
+      goto out;
+    }
+
+  for (index = 0; index < embedding->dimensions[0]; index++)
+    {
+      square_sum += (double)input[index] * input[index];
+    }
+
+  inverse_rms = 1.0f /
+                sqrtf((float)(square_sum / embedding->dimensions[0]) +
+                      epsilon);
+  for (index = 0; index < embedding->dimensions[0]; index++)
+    {
+      float value = input[index] * inverse_rms * weight[index];
+
+      normalized[index] = value;
+      output_sum += value;
+      output_square_sum += (double)value * value;
+      if (index == 0 || value < minimum)
+        {
+          minimum = value;
+        }
+
+      if (index == 0 || value > maximum)
+        {
+          maximum = value;
+        }
+    }
+
+  printf("embedding token=%" PRIu32 " hidden=%" PRIu64
+         " vocab=%" PRIu64 " type=%s row-bytes=%" PRIu64 "\n",
+         token_id, embedding->dimensions[0], embedding->dimensions[1],
+         tensor_type_name(embedding->type),
+         embedding->bytes / embedding->dimensions[1]);
+  printf("rmsnorm tensor=blk.0.attn_norm.weight epsilon=%.9g "
+         "input-rms=%.9g inverse-rms=%.9g\n",
+         (double)epsilon,
+         sqrt(square_sum / embedding->dimensions[0]),
+         (double)inverse_rms);
+  printf("embedding-crc=%08" PRIx32 " normalized-crc=%08" PRIx32
+         " sum=%.9g l2=%.9g min=%.9g max=%.9g\n",
+         tensor_crc32(0, (const uint8_t *)input,
+                      (size_t)embedding->dimensions[0] * sizeof(float)),
+         tensor_crc32(0, (const uint8_t *)normalized,
+                      (size_t)embedding->dimensions[0] * sizeof(float)),
+         output_sum, sqrt(output_square_sum),
+         (double)minimum, (double)maximum);
+  printf("normalized[0..7]=");
+  for (index = 0; index < embedding->dimensions[0] && index < 8; index++)
+    {
+      printf("%s%.7g", index == 0 ? "" : ",", (double)normalized[index]);
+    }
+
+  putchar('\n');
+  puts("Qwen2 token embedding and layer-0 RMSNorm checkpoint passed; "
+       "Q projection pending.");
+  ret = 0;
+
+out:
+  free(normalized);
+  free(weight);
+  free(input);
   free(tensors);
   if (stream != NULL)
     {
