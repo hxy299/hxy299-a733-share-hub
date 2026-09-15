@@ -46,3 +46,6 @@ Qwen2 预分词与 BPE merge，并与参考运行时逐 token 对比。
 
 镜像已通过 ext4 只读文件系统检查、嵌入内核逐字节/哈希核对和 GPT 检查。GPT 工具
 仅保留历史镜像已有的“分区 4 未按 2048 sector 边界结束”提示，没有发现分区错误。
+
+v73 已在 Cubie A7Z 上使用真实 1.5B 模型完成解码验收，结果见
+docs/a733/LOCAL_LLM_STAGE7_BOARD_TEST_20260915.md。
