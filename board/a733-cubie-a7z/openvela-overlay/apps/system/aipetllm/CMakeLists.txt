@@ -18,6 +18,7 @@ if(CONFIG_SYSTEM_AIPETLLM)
     SRCS
     aipetllm_main.c
     aipetllm_cxx.cxx
+    aipetllm_bpe.cxx
     aipetllm_ggml_quant.c
     aipetllm_modelcheck.c
     aipetllm_tokencheck.c
