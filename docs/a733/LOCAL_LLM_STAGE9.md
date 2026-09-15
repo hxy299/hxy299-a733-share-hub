@@ -44,3 +44,6 @@ RoPE、attention、FFN、KV cache 或 logits，不能据此宣称已经完成文
 
 镜像已通过 ext4、嵌入内核哈希和 GPT 独立检查。分区 4 对齐提示继承自基础镜像，
 校验工具报告 No problems found。
+
+v75 已使用真实 1.5B 模型在 Cubie A7Z 上通过两个 token 的数值验收，完整结果见
+docs/a733/LOCAL_LLM_STAGE9_BOARD_TEST_20260915.md。
