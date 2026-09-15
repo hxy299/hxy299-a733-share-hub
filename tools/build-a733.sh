@@ -9,6 +9,8 @@ build_dir="$workspace/cmake_out/cubie-a7z_nsh"
 
 export PATH="$workspace/prebuilts/build-tools/linux-x86_64/bin:$workspace/prebuilts/gcc/linux-x86_64/aarch64-none-elf/bin:$workspace/prebuilts/tools/linux-x86_64:$workspace/prebuilts/tools/cmake/bin:$workspace/prebuilts/tools/ninja:/usr/bin:/bin:${PATH:-}"
 
+bash "$script_dir/check-openvela-first.sh"
+
 if [[ "${1:-}" == "--incremental" ]]; then
   cmake --build "$build_dir" -j"${JOBS:-8}"
 else

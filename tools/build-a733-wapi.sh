@@ -10,6 +10,8 @@ overlay="$team_dir/board/a733-cubie-a7z/openvela-overlay"
 build="$official/cmake_out/cubie-a7z_nsh_v69_aipet_modelcheck"
 backup="$(mktemp -d)"
 
+bash "$script_dir/check-openvela-first.sh"
+
 files=(
   vendor/allwinnertech/chips/a733/a733_wifi_usb.c
   vendor/allwinnertech/boards/a733/cubie-a7z/configs/nsh/defconfig

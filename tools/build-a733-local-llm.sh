@@ -8,6 +8,8 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 board="$root/vendor/allwinnertech/boards/a733/cubie-a7z/configs/nsh"
 build="$root/cmake_out/cubie-a7z_nsh_v58_aipet_llm"
 
+bash "$root/tools/check-openvela-first.sh"
+
 if [[ "${1:-}" == "--clean" ]]; then
   rm -rf "$build"
 fi
