@@ -60,6 +60,43 @@ struct qwen_layer_s
   uint16_t mask;
 };
 
+/* One explicit model snapshot shared by commands in the flat image. Keep the
+ * lock for a forward operation; concurrent requests fail fast, never free
+ * weights that workers are reading. Different models require explicit unload.
+ */
+
+static pthread_mutex_t g_model_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint8_t *g_model_cache;
+static size_t g_model_bytes;
+static char g_model_path[1024];
+
+int aipetllm_cache_control(int unload)
+{
+  if (pthread_mutex_trylock(&g_model_lock) != 0)
+    {
+      fputs("llm-cache: busy; inference/load in progress\n", stderr);
+      return 1;
+    }
+
+  if (unload)
+    {
+      free(g_model_cache);
+      g_model_cache = NULL;
+      g_model_bytes = 0;
+      g_model_path[0] = '\0';
+      puts("llm-cache: unloaded");
+    }
+  else
+    {
+      printf("llm-cache: state=%s bytes=%zu path='%s'\n",
+             g_model_cache == NULL ? "empty" : "resident",
+             g_model_bytes, g_model_path);
+    }
+
+  pthread_mutex_unlock(&g_model_lock);
+  return 0;
+}
+
 static int read_exact(FILE *stream, void *buffer, size_t length)
 {
   return fread(buffer, 1, length, stream) == length ? 0 : -EIO;
@@ -847,7 +884,8 @@ static void *matvec_worker(void *argument)
 static int read_parallel_matvec(FILE *stream, uint64_t absolute_offset,
                                const struct tensor_info_s *tensor,
                                const float *input, float *output,
-                               unsigned int cpu_mask)
+                               unsigned int cpu_mask,
+                               const uint8_t *model_base, size_t model_bytes)
 {
   struct matvec_worker_s workers[8];
   pthread_t threads[8];
@@ -855,7 +893,8 @@ static int read_parallel_matvec(FILE *stream, uint64_t absolute_offset,
   uint64_t dimensions[1];
   uint64_t row_bytes;
   uint64_t rows;
-  uint8_t *weights = NULL;
+  const uint8_t *weights = NULL;
+  uint8_t *copied_weights = NULL;
   block_q8_K *input_q8 = NULL;
   unsigned int total_weight = 0;
   unsigned int cumulative = 0;
@@ -865,8 +904,7 @@ static int read_parallel_matvec(FILE *stream, uint64_t absolute_offset,
   int cpu;
   int index;
 
-  if (cpu_mask == 0 || (cpu_mask & (cpu_mask - 1)) == 0 ||
-      tensor->type == GGML_TYPE_F32)
+  if (cpu_mask == 0 || tensor->type == GGML_TYPE_F32)
     {
       return read_quantized_matvec(stream, absolute_offset, tensor,
                                    input, output);
@@ -890,7 +928,22 @@ static int read_parallel_matvec(FILE *stream, uint64_t absolute_offset,
       return -EOVERFLOW;
     }
 
-  weights = malloc((size_t)(rows * row_bytes));
+  if (model_base != NULL)
+    {
+      if (absolute_offset > model_bytes ||
+          rows * row_bytes > model_bytes - absolute_offset ||
+          absolute_offset % _Alignof(block_q4_K) != 0)
+        {
+          return -EOVERFLOW;
+        }
+
+      weights = model_base + (size_t)absolute_offset;
+    }
+  else
+    {
+      copied_weights = malloc((size_t)(rows * row_bytes));
+      weights = copied_weights;
+    }
   input_q8 = malloc((size_t)(dimensions[0] / QK_K) * sizeof(block_q8_K));
   if (weights == NULL || input_q8 == NULL)
     {
@@ -898,8 +951,9 @@ static int read_parallel_matvec(FILE *stream, uint64_t absolute_offset,
       goto out;
     }
 
-  if (fseek(stream, (long)absolute_offset, SEEK_SET) != 0 ||
-      read_exact(stream, weights, (size_t)(rows * row_bytes)) < 0)
+  if (copied_weights != NULL &&
+      (fseek(stream, (long)absolute_offset, SEEK_SET) != 0 ||
+       read_exact(stream, copied_weights, (size_t)(rows * row_bytes)) < 0))
     {
       result = -EIO;
       goto out;
@@ -958,13 +1012,13 @@ static int read_parallel_matvec(FILE *stream, uint64_t absolute_offset,
     }
 
   free(input_q8);
-  free(weights);
+  free(copied_weights);
   pthread_setcancelstate(old_cancel, NULL);
   return result;
 
 out:
   free(input_q8);
-  free(weights);
+  free(copied_weights);
   return result;
 }
 
@@ -1135,7 +1189,9 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
                                      uint32_t block_count,
                                      uint32_t head_count,
                                      uint32_t head_count_kv,
-                                     float epsilon, unsigned int cpu_mask)
+                                     float epsilon, unsigned int cpu_mask,
+                                     const uint8_t *model_base,
+                                     size_t model_bytes)
 {
   struct tensor_info_s *output_norm;
   struct tensor_info_s *output_weight;
@@ -1272,7 +1328,8 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
       if (rmsnorm_vector(stream, data_start, attention_norm, state,
                          hidden, epsilon, norm_weight, normalized) < 0 ||
           read_parallel_matvec(stream, data_start + attention_v->offset,
-                                attention_v, normalized, value, cpu_mask) < 0 ||
+                                attention_v, normalized, value, cpu_mask,
+                                model_base, model_bytes) < 0 ||
           add_f32_bias(stream, data_start, attention_v_bias, value,
                        value_dimensions) < 0)
         {
@@ -1294,7 +1351,7 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
       if (read_parallel_matvec(stream,
                                 data_start + attention_output->offset,
                                 attention_output, context, projected,
-                                cpu_mask) < 0)
+                                cpu_mask, model_base, model_bytes) < 0)
         {
           fprintf(stderr, "aipetllm: forward1 layer %" PRIu32
                           " attention output failed\n", layer);
@@ -1309,9 +1366,11 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
       if (rmsnorm_vector(stream, data_start, ffn_norm, state, hidden,
                          epsilon, norm_weight, normalized) < 0 ||
           read_parallel_matvec(stream, data_start + ffn_gate->offset,
-                                ffn_gate, normalized, gate, cpu_mask) < 0 ||
+                                ffn_gate, normalized, gate, cpu_mask,
+                                model_base, model_bytes) < 0 ||
           read_parallel_matvec(stream, data_start + ffn_up->offset,
-                                ffn_up, normalized, up, cpu_mask) < 0)
+                                ffn_up, normalized, up, cpu_mask,
+                                model_base, model_bytes) < 0)
         {
           fprintf(stderr, "aipetllm: forward1 layer %" PRIu32
                           " FFN input failed\n", layer);
@@ -1337,7 +1396,8 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
         }
 
       if (read_parallel_matvec(stream, data_start + ffn_down->offset,
-                                ffn_down, swiglu, down, cpu_mask) < 0)
+                                ffn_down, swiglu, down, cpu_mask,
+                                model_base, model_bytes) < 0)
         {
           fprintf(stderr, "aipetllm: forward1 layer %" PRIu32
                           " FFN down failed\n", layer);
@@ -1376,7 +1436,8 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
   logits = malloc((size_t)output_weight->dimensions[1] * sizeof(float));
   if (logits == NULL ||
       read_parallel_matvec(stream, data_start + output_weight->offset,
-                            output_weight, normalized, logits, cpu_mask) < 0)
+                            output_weight, normalized, logits, cpu_mask,
+                            model_base, model_bytes) < 0)
     {
       fputs("aipetllm: forward1 LM head failed\n", stderr);
       goto out;
@@ -1449,6 +1510,10 @@ static int embedding_pipeline_checkpoint(const char *path,
   struct tensor_info_s *tensors = NULL;
   FILE *stream = NULL;
   void *model_memory = NULL;
+  size_t model_length = 0;
+  int cache_locked = 0;
+  int cache_hit = 0;
+  int old_cancel = PTHREAD_CANCEL_ENABLE;
   struct timespec load_start;
   struct timespec compute_start;
   struct timespec finished;
@@ -1495,15 +1560,47 @@ static int embedding_pipeline_checkpoint(const char *path,
   int ret = 1;
 
   projection_mode &= 255;
-  stream = fopen(path, "rb");
+  if (projection_mode == 7)
+    {
+      if (strlen(path) >= sizeof(g_model_path) ||
+          pthread_mutex_trylock(&g_model_lock) != 0)
+        {
+          fputs("forwardfast: cache busy or model path too long\n", stderr);
+          return 1;
+        }
+
+      cache_locked = 1;
+      pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancel);
+      if (g_model_cache != NULL)
+        {
+          if (strcmp(path, g_model_path) != 0)
+            {
+              fputs("forwardfast: unload existing model before switching\n",
+                    stderr);
+              goto out;
+            }
+
+          cache_hit = 1;
+          model_memory = g_model_cache;
+          model_length = g_model_bytes;
+          clock_gettime(CLOCK_MONOTONIC, &compute_start);
+          stream = fmemopen(model_memory, model_length, "rb");
+          puts("forwardfast: cache-hit; load=0 sec; no model SD reads");
+        }
+    }
+
+  if (!cache_hit)
+    {
+      stream = fopen(path, "rb");
+    }
   if (stream == NULL)
     {
       fprintf(stderr, "aipetllm: embed cannot open %s: %d (%s)\n",
               path, errno, strerror(errno));
-      return 1;
+      goto out;
     }
 
-  if (projection_mode == 7)
+  if (projection_mode == 7 && !cache_hit)
     {
       struct stat model_stat;
       size_t loaded = 0;
@@ -1520,6 +1617,7 @@ static int embedding_pipeline_checkpoint(const char *path,
         }
 
       length = (size_t)model_stat.st_size;
+      model_length = length;
       clock_gettime(CLOCK_MONOTONIC, &load_start);
       model_memory = malloc(length);
       if (model_memory == NULL)
@@ -1771,7 +1869,8 @@ static int embedding_pipeline_checkpoint(const char *path,
       ret = qwen2_forward1_checkpoint(stream, data_start, tensors,
                                       tensor_count, embedding, token_id,
                                       block_count, head_count,
-                                      head_count_kv, epsilon, cpu_mask);
+                                      head_count_kv, epsilon, cpu_mask,
+                                      model_memory, model_length);
       goto out;
     }
 
@@ -2486,12 +2585,31 @@ out:
         {
           clock_gettime(CLOCK_MONOTONIC, &finished);
           printf("forwardfast: compute=%.4f sec; single-token checkpoint; "
-                 "persistent cache/generation pending\n",
+                 "model resident; multi-token generation pending\n",
                  (double)(finished.tv_sec - compute_start.tv_sec) +
                  (double)(finished.tv_nsec - compute_start.tv_nsec) / 1.0e9);
         }
 
-      free(model_memory);
+      if (!cache_hit)
+        {
+          if (ret == 0)
+            {
+              g_model_cache = model_memory;
+              g_model_bytes = model_length;
+              strcpy(g_model_path, path);
+              puts("forwardfast: cache retained; use aipetllm unload to free");
+            }
+          else
+            {
+              free(model_memory);
+            }
+        }
+    }
+
+  if (cache_locked)
+    {
+      pthread_mutex_unlock(&g_model_lock);
+      pthread_setcancelstate(old_cancel, NULL);
     }
 
   return ret;

@@ -47,6 +47,7 @@ struct gguf_reader_s
 
 extern int aipetllm_cxx_checkpoint(void);
 extern int aipetllm_cpu_checkpoint(void);
+extern int aipetllm_cache_control(int unload);
 extern int aipetllm_forward_fast_checkpoint(const char *path,
                                            uint32_t token_id,
                                            unsigned int cpu_mask);
@@ -628,6 +629,7 @@ static void usage(void)
   puts("  aipetllm block2 model.gguf first-token-id second-token-id");
   puts("  aipetllm forward1 model.gguf token-id");
   puts("  aipetllm forwardfast model.gguf token-id [cores: 2,3,4,5,6,7]");
+  puts("  aipetllm cacheinfo | unload (persistent RAM model)");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
 
@@ -798,6 +800,12 @@ int main(int argc, char **argv)
       return aipetllm_transformer_block2_checkpoint(argv[2],
                                                      (uint32_t)first,
                                                      (uint32_t)second);
+    }
+
+  if (argc == 2 && (strcmp(argv[1], "cacheinfo") == 0 ||
+                    strcmp(argv[1], "unload") == 0))
+    {
+      return aipetllm_cache_control(strcmp(argv[1], "unload") == 0);
     }
 
   if ((argc == 4 && strcmp(argv[1], "forward1") == 0) ||
