@@ -40,3 +40,22 @@ free
 logits-crc=7fdfee67、argmax=6233。比较 compute 而非包含模型读取的
 总时间。测试同时检查另一终端 Wi-Fi/SSH 响应，长期稳定性仍待验证。
 下一步采用长期模型/目录缓存和线程池，再实现多 token KV cache。
+
+## 候选构建存档
+
+源提交 `a61b953`，WSL 构建通过；System.map 确认并行函数与工作线程
+已链接。官方 arch.h 临时补丁已恢复，没有 .orig 残留。行分配公式
+255 个有效掩码×6 种行数共1530组检查，无缺口或重叠；此为公式检查，
+不替代开发板线程/数值/压力测试。
+
+- 镜像：`A733-A7Z-ALL-Files/openvela-a733-cubie-a7z-sd-llm-multicore-v87-candidate.img`
+- 大小：2147483648 字节，内核1713552字节。
+- 内核 SHA256：`95686b5938597743048dd0c4f0873be9f8a0b9c70e06c5a3c268bbefb130108b`。
+- 镜像 SHA256：`e992f46cba766cd9f0ba336b46edc17d429adec5dcb66feca6dfe6dc4c9acb22`。
+- ext4 检查、嵌入内核回读、GPT 检查通过；继承的分区4尾部对齐提示
+  仍保留。v86 镜像不变。
+- 标签：`a733-llm-multicore-v87-candidate`。
+- 恢复包：`A733-A7Z-ALL-Files/archives/llm-v87/a733-llm-v87.bundle`。
+- 构建/打包/检查日志：同目录 build.log、package.log、verify.log。
+
+多核心实机数值、速度和内存恢复均待测试，不宣称六核加速已实测通过。
