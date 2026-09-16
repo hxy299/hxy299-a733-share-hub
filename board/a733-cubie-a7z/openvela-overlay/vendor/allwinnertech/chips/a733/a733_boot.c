@@ -15,6 +15,23 @@
 
 extern void a733_board_initialize(void);
 
+#ifdef CONFIG_ARCH_HAVE_MULTICPU
+uint64_t arm64_get_mpid(int cpu)
+{
+  /* A733 numbers all eight application CPUs in MPIDR Aff1 while Aff0 is
+   * zero.  This is the same mapping published by the official sun60iw2p1
+   * Linux DTS and reported by the GICR_TYPER affinity fields.
+   */
+
+  return (uint64_t)(unsigned int)cpu << 8;
+}
+
+int arm64_get_cpuid(uint64_t mpid)
+{
+  return (int)MPID_TO_CORE(mpid);
+}
+#endif
+
 void a733_boot_marker(const char *marker)
 {
 #ifdef CONFIG_ARCH_EARLY_PRINT

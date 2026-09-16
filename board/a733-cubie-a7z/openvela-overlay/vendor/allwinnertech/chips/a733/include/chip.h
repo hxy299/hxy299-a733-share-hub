@@ -53,12 +53,14 @@
 #define ARMV8A_ICACHE_LINESIZE    64
 
 #define MPID_TO_CLUSTER_ID(mpid)  ((mpid) & ~UINT64_C(0xff))
+#define MPID_TO_CORE(mpid)        (((uint64_t)(mpid) >> 8) & \
+                                   UINT64_C(0xff))
 
 #ifdef __ASSEMBLY__
 
 .macro get_cpu_id xreg0
   mrs  \xreg0, mpidr_el1
-  ubfx \xreg0, \xreg0, #0, #8
+  ubfx \xreg0, \xreg0, #8, #8
 .endm
 
 #endif

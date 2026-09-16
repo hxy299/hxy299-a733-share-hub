@@ -10,14 +10,16 @@ config ARCH_CHIP_A733
 	select ARCH_CPU_UNKNOWN
 	select ARCH_HAVE_IRQTRIGGER
 	select ARCH_HAVE_IRQPRIO
+	select ARCH_HAVE_MULTICPU
 	select ARCH_HAVE_RESET
 	select ARCH_HAVE_POWEROFF
 	select ARM64_HAVE_PSCI
 	---help---
 		Initial ARM64 application-core port for the Allwinner A733.  Boot0,
 		SCP, BL31 and U-Boot remain responsible for DDR, clock and PMIC
-		initialization.  The first-stage port deliberately runs one core and
-		uses the standard ARMv8 virtual timer and GICv3 support.
+		initialization.  CPU affinity is encoded in MPIDR Aff1: logical CPUs
+		0..5 are Cortex-A55 and 6..7 are Cortex-A76.  The port uses the
+		standard ARMv8 virtual timer, PSCI and GICv3 support.
 
 config A733_WATCHDOG
 	bool "A733 watchdog"
