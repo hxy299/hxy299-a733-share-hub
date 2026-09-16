@@ -77,6 +77,19 @@ export PATH="$official/prebuilts/build-tools/linux-x86_64/bin:$official/prebuilt
 if [[ "${1:-}" == "--incremental" ]]; then
   cmake --build "$build" -j"${JOBS:-8}"
 else
+  # build.sh preserves an existing CMake cache.  Remove only this board's
+  # generated directory so defconfig changes (notably CONFIG_SMP) cannot be
+  # silently ignored by a stale .config.
+  case "$build" in
+    "$official"/cmake_out/cubie-a7z_nsh_v69_aipet_modelcheck)
+      rm -rf "$build"
+      ;;
+    *)
+      echo "Refusing unsafe build cleanup path: $build" >&2
+      exit 1
+      ;;
+  esac
+
   ./nuttx/tools/build.sh \
     vendor/allwinnertech/boards/a733/cubie-a7z/configs/nsh \
     --cmake -b "$build" -j"${JOBS:-8}"
@@ -84,4 +97,8 @@ fi
 
 grep -E 'CONFIG_(NETDEV_WIRELESS_IOCTL|WIRELESS_WAPI|WIRELESS_WAPI_CMDTOOL)' \
   "$build/.config"
+
+grep -qx 'CONFIG_SMP=y' "$build/.config"
+grep -qx 'CONFIG_SMP_NCPUS=2' "$build/.config"
+grep -qx 'CONFIG_ARCH_HAVE_MULTICPU=y' "$build/.config"
 sha256sum "$build/nuttx.bin"
