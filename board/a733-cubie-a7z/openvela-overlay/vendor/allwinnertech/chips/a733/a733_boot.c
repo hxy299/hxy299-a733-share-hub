@@ -28,7 +28,7 @@ uint64_t arm64_get_mpid(int cpu)
 
 int arm64_get_cpuid(uint64_t mpid)
 {
-  return (int)MPID_TO_CORE(mpid);
+  return (int)A733_MPID_TO_CPU(mpid);
 }
 #endif
 

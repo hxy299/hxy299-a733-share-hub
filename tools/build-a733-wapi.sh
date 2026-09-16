@@ -24,6 +24,9 @@ files=(
   apps/system/a733wifi/a733wifi_main.c
   apps/system/a733wifi/Kconfig
 )
+patched_files=(
+  nuttx/arch/arm64/include/arch.h
+)
 aipet_relative=apps/system/aipetllm
 aipet_official="$official/$aipet_relative"
 aipet_overlay="$overlay/$aipet_relative"
@@ -44,6 +47,10 @@ restore_official()
     fi
   done
 
+  for path in "${patched_files[@]}"; do
+    cp -f "$backup/$path" "$official/$path"
+  done
+
   rm -rf "$aipet_official"
   if [[ -d "$backup/$aipet_relative" ]]; then
     cp -a "$backup/$aipet_relative" "$aipet_official"
@@ -62,6 +69,15 @@ for path in "${files[@]}"; do
   mkdir -p "$official/$(dirname "$path")"
   cp -f "$overlay/$path" "$official/$path"
 done
+
+
+for path in "${patched_files[@]}"; do
+  mkdir -p "$backup/$(dirname "$path")"
+  cp "$official/$path" "$backup/$path"
+done
+
+patch --forward --batch -p1 -d "$official" \
+  < "$team_dir/patches/nuttx-arm64-a733-aff1-cpuid.patch"
 
 if [[ -d "$aipet_official" ]]; then
   mkdir -p "$backup/$(dirname "$aipet_relative")"

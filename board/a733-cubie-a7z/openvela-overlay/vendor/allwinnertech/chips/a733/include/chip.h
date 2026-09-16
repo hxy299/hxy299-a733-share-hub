@@ -53,7 +53,7 @@
 #define ARMV8A_ICACHE_LINESIZE    64
 
 #define MPID_TO_CLUSTER_ID(mpid)  ((mpid) & ~UINT64_C(0xff))
-#define MPID_TO_CORE(mpid)        (((uint64_t)(mpid) >> 8) & \
+#define A733_MPID_TO_CPU(mpid)    (((uint64_t)(mpid) >> 8) & \
                                    UINT64_C(0xff))
 
 #ifdef __ASSEMBLY__
