@@ -30,3 +30,23 @@ dmesg
 才进入 A76 优先的 LLM 工作线程、权重内存缓存与持久 KV cache 优化。
 当前不承诺频率、实际 tok/s 或八核长期稳定性。失败时保留完整日志并回退
 v84；不得覆盖任何既有镜像。
+
+## 构建与镜像存档
+
+构建源提交：`92c2c35`。恢复后的 WSL 构建成功，生成配置已确认
+`CONFIG_SMP_NCPUS=8`、`CONFIG_SMP_DEFAULT_CPUSET=0xff`；
+`System.map` 包含 `aipetllm_cpu_checkpoint`。临时应用的官方 `arch.h`
+补丁已恢复，未留下 `.orig` 文件。
+
+- 镜像：`A733-A7Z-ALL-Files/openvela-a733-cubie-a7z-sd-smp-8cpu-a76-v85-candidate.img`
+- 大小：2147483648 字节（2 GiB）。
+- 内核：1709456 字节，SHA256 `8de14f44999f2f002bd55264b63bedce4608488e72b01fcc3e635af1b52372b9`。
+- 镜像 SHA256：`2022121c014b4ebde2c4c0475943fa1f1b02a5bceba3d2579fa4a4e465ee7a69`。
+- ext4 只读检查通过，内核回读一致，GPT 检查报告无问题。基础镜像
+  分区 4 尾部非 2048 扇区对齐提示仍保留，不属于本次新增错误。
+- 候选恢复标签：`a733-smp-8cpu-a76-v85-candidate`。
+- 仓库恢复包：`A733-A7Z-ALL-Files/archives/smp-v85/a733-smp-v85.bundle`。
+- 恢复构建日志：`A733-A7Z-ALL-Files/archives/smp-v85/v85-resume-build.log`。
+
+此记录仅证明构建和镜像校验通过；八核启动、A76 身份和基础功能仍需
+执行上面的实机回归，不能将候选版本描述为实机验证完成。
