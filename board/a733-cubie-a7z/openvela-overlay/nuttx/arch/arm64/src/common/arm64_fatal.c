@@ -606,6 +606,30 @@ uint64_t *arm64_fatal_handler(uint64_t *regs)
   a733_fault_value(fault_cpu, "ELR_EL1", fault_elr);
   a733_fault_value(fault_cpu, "FAR_EL1", fault_far);
   a733_fault_value(fault_cpu, "regs", (uintptr_t)regs);
+  /* The saved frame is supplied by the architecture exception vector.
+   * Print LR first, before normal panic handling can itself fault.  Reading
+   * this frame does not require scheduler TCBs to be valid.
+   */
+
+  if (regs != NULL)
+    {
+      unsigned int index;
+      char name[4];
+
+      a733_fault_value(fault_cpu, "LR_X30", regs[REG_X30]);
+      a733_fault_value(fault_cpu, "SP_ELX", regs[REG_SP_ELX]);
+      a733_fault_value(fault_cpu, "SP_EL0", regs[REG_SP_EL0]);
+      a733_fault_value(fault_cpu, "saved_ELR", regs[REG_ELR]);
+      a733_fault_value(fault_cpu, "SPSR", regs[REG_SPSR]);
+      for (index = 0; index < 30; index++)
+        {
+          name[0] = 'X';
+          name[1] = '0' + index / 10;
+          name[2] = '0' + index % 10;
+          name[3] = '\0';
+          a733_fault_value(fault_cpu, name, regs[index]);
+        }
+    }
 #endif
 
   struct tcb_s *tcb = this_task();
