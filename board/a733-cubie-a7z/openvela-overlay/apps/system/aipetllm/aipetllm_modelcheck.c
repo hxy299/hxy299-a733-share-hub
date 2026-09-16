@@ -900,6 +900,8 @@ static int embedding_pipeline_checkpoint(const char *path,
   struct tensor_info_s *attention_q_bias = NULL;
   struct tensor_info_s *attention_k_bias = NULL;
   struct tensor_info_s *attention_v_bias = NULL;
+  struct tensor_info_s *attention_output_weight = NULL;
+  struct tensor_info_s *ffn_norm = NULL;
   struct tensor_info_s *tensors = NULL;
   FILE *stream = NULL;
   uint64_t metadata_count;
@@ -925,6 +927,10 @@ static int embedding_pipeline_checkpoint(const char *path,
   float *second_k = NULL;
   float *second_v = NULL;
   float *attention_output = NULL;
+  float *projected_output = NULL;
+  float *residual_output = NULL;
+  float *post_attention = NULL;
+  float *ffn_norm_weight = NULL;
   uint64_t index;
   double square_sum = 0.0;
   double output_sum = 0.0;
@@ -1106,6 +1112,14 @@ static int embedding_pipeline_checkpoint(const char *path,
         {
           attention_v_bias = tensor;
         }
+      else if (strcmp(tensor->name, "blk.0.attn_output.weight") == 0)
+        {
+          attention_output_weight = tensor;
+        }
+      else if (strcmp(tensor->name, "blk.0.ffn_norm.weight") == 0)
+        {
+          ffn_norm = tensor;
+        }
     }
 
   {
@@ -1178,6 +1192,27 @@ static int embedding_pipeline_checkpoint(const char *path,
     {
       rotary_dimension = (uint32_t)(attention_q->dimensions[1] /
                                     head_count);
+    }
+
+  if (projection_mode >= 4 &&
+      (attention_output_weight == NULL || ffn_norm == NULL ||
+       attention_output_weight->dimension_count != 2 ||
+       attention_output_weight->dimensions[0] !=
+       attention_q->dimensions[1] ||
+       attention_output_weight->dimensions[1] !=
+       embedding->dimensions[0] ||
+       (attention_output_weight->type != GGML_TYPE_F32 &&
+        attention_output_weight->type != GGML_TYPE_Q4_K &&
+        attention_output_weight->type != GGML_TYPE_Q6_K) ||
+       ffn_norm->dimension_count != 1 ||
+       ffn_norm->dimensions[0] != embedding->dimensions[0] ||
+       ffn_norm->type != GGML_TYPE_F32 ||
+       data_start > UINT64_MAX - attention_output_weight->offset ||
+       data_start > UINT64_MAX - ffn_norm->offset))
+    {
+      fputs("aipetllm: attnblock2 incompatible output/norm tensors\n",
+            stderr);
+      goto out;
     }
 
   input = malloc((size_t)embedding->dimensions[0] * sizeof(float));
@@ -1543,9 +1578,110 @@ static int embedding_pipeline_checkpoint(const char *path,
 
   puts("Qwen2 two-token causal GQA/KV-cache checkpoint passed; "
        "attention output projection pending.");
+
+  if (projection_mode == 3)
+    {
+      ret = 0;
+      goto out;
+    }
+
+  projected_output = malloc((size_t)embedding->dimensions[0] *
+                            sizeof(float));
+  residual_output = malloc((size_t)embedding->dimensions[0] * sizeof(float));
+  post_attention = malloc((size_t)embedding->dimensions[0] * sizeof(float));
+  ffn_norm_weight = malloc((size_t)embedding->dimensions[0] * sizeof(float));
+  if (projected_output == NULL || residual_output == NULL ||
+      post_attention == NULL || ffn_norm_weight == NULL)
+    {
+      fputs("aipetllm: attnblock2 vector allocation failed\n", stderr);
+      goto out;
+    }
+
+  if (read_quantized_matvec(stream,
+                            data_start + attention_output_weight->offset,
+                            attention_output_weight, attention_output,
+                            projected_output) < 0 ||
+      read_dequantized_row(stream, data_start + ffn_norm->offset,
+                           ffn_norm, 0, ffn_norm_weight) < 0)
+    {
+      fputs("aipetllm: attnblock2 output/norm tensor execution failed\n",
+            stderr);
+      goto out;
+    }
+
+  {
+    double residual_square_sum = 0.0;
+    double normalized_sum = 0.0;
+    double normalized_square_sum = 0.0;
+    float post_inverse_rms;
+    float post_minimum = 0.0f;
+    float post_maximum = 0.0f;
+    uint64_t component;
+
+    for (component = 0; component < embedding->dimensions[0]; component++)
+      {
+        float value = second_input[component] + projected_output[component];
+
+        residual_output[component] = value;
+        residual_square_sum += (double)value * value;
+      }
+
+    post_inverse_rms = 1.0f /
+                       sqrtf((float)(residual_square_sum /
+                                     embedding->dimensions[0]) + epsilon);
+    for (component = 0; component < embedding->dimensions[0]; component++)
+      {
+        float value = residual_output[component] * post_inverse_rms *
+                      ffn_norm_weight[component];
+
+        post_attention[component] = value;
+        normalized_sum += value;
+        normalized_square_sum += (double)value * value;
+        if (component == 0 || value < post_minimum)
+          {
+            post_minimum = value;
+          }
+
+        if (component == 0 || value > post_maximum)
+          {
+            post_maximum = value;
+          }
+      }
+
+    printf("attention-output tensor=%s type=%s input=%" PRIu64
+           " output=%" PRIu64 " row-bytes=%" PRIu64 "\n",
+           attention_output_weight->name,
+           tensor_type_name(attention_output_weight->type),
+           attention_output_weight->dimensions[0],
+           attention_output_weight->dimensions[1],
+           attention_output_weight->bytes /
+           attention_output_weight->dimensions[1]);
+    printf("attention-output-crc=%08" PRIx32
+           " residual-crc=%08" PRIx32
+           " post-norm-crc=%08" PRIx32 "\n",
+           tensor_crc32(0, (const uint8_t *)projected_output,
+                        (size_t)embedding->dimensions[0] * sizeof(float)),
+           tensor_crc32(0, (const uint8_t *)residual_output,
+                        (size_t)embedding->dimensions[0] * sizeof(float)),
+           tensor_crc32(0, (const uint8_t *)post_attention,
+                        (size_t)embedding->dimensions[0] * sizeof(float)));
+    printf("post-attention-rms=%.9g inverse-rms=%.9g"
+           " sum=%.9g l2=%.9g min=%.9g max=%.9g\n",
+           sqrt(residual_square_sum / embedding->dimensions[0]),
+           (double)post_inverse_rms, normalized_sum,
+           sqrt(normalized_square_sum),
+           (double)post_minimum, (double)post_maximum);
+  }
+
+  puts("Qwen2 layer-0 attention output/residual/FFN-norm checkpoint passed; "
+       "SwiGLU feed-forward network pending.");
   ret = 0;
 
 out:
+  free(ffn_norm_weight);
+  free(post_attention);
+  free(residual_output);
+  free(projected_output);
   free(attention_output);
   free(second_v);
   free(second_k);
@@ -1587,5 +1723,13 @@ int aipetllm_attention2_checkpoint(const char *path, uint32_t first_token,
                                    uint32_t second_token)
 {
   return embedding_pipeline_checkpoint(path, first_token, 3, 0,
+                                       second_token);
+}
+
+int aipetllm_attention_block2_checkpoint(const char *path,
+                                         uint32_t first_token,
+                                         uint32_t second_token)
+{
+  return embedding_pipeline_checkpoint(path, first_token, 4, 0,
                                        second_token);
 }
