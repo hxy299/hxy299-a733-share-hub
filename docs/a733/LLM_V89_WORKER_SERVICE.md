@@ -72,3 +72,23 @@ aipetllm unload
 线程池不能证明所有残留资源已修复，需据上述数据继续定位。
 并发busy、网络/SSH响应和温度压力仍待测试。目录缓存、真实multi-token
 prefill/KV cache、LM采样/连续生成尚未实现，后续单独推进。
+
+## 候选构建存档
+
+最终构建源提交 `51f759a`，WSL 构建通过。首轮应用私有内核头引用被
+边界检查拒绝，已在vendor平台hook修复；第二轮严格返回值检查错误已
+修复。失败及最终日志均保留，不将失败输出内核当成发布产物。
+System.map确认 `llm_pool_service` 与 `a733_compute_service_start`。
+官方arch.h临时补丁已恢复，无.orig残留。线程池和资源释放尚待实机测试。
+
+- 镜像：`A733-A7Z-ALL-Files/openvela-a733-cubie-a7z-sd-llm-pool-v89-candidate.img`
+- 大小2147483648字节，内核1713600字节。
+- 内核SHA256：`7b506634aedba72a0c04cb211e5ee3381f8f74990c51c06fa85c7493492aeeef`。
+- 镜像SHA256：`72d0d0d3e9a7306bdbd054e377ce0e9878787623829aba2e8826d844de421b7e`。
+- ext4检查、内核回读、GPT检查通过，继承的分区4尾部对齐提示不变。
+- 恢复标签：`a733-llm-pool-v89-candidate`。
+- 恢复包：`A733-A7Z-ALL-Files/archives/llm-v89/a733-llm-v89.bundle`。
+- 同目录日志：build.log（边界失败）、build-platform.log（编译失败）、
+  build-final.log（成功）、package.log、verify.log。
+
+v88镜像与基本验证标签保持不变，不宣称内存泄漏已经定位或修复。
