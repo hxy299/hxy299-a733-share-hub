@@ -19,3 +19,11 @@ v90 System.map 显示 CPU IDLE 栈数组从 `423f04a0` 开始，每核 8192 字�
 整卡烧录前备份实体卡上的个人数据、模型和密钥。保存从上电到停止输出的完整串口日志，至少包含 F0 后所有 FAULT 行。此阶段不要运行 LLM 或对故障版本启用开机 LLM 服务。
 
 v88 恢复镜像不变，源码备份位于上层 `a733-v90-before-v91.bundle`。本次 ELF/Image/System.map 和构建、打包、校验日志保存到 `archives/llm-v91/`。
+
+## 离线校验
+
+构建和校验均退出 0，官方异常处理文件已经恢复。镜像内核回读与归档 Image 一致，ext4 检查通过，GPT 无错误（仍有基线分区 4 尾部非 2048 扇区对齐提示）。尚未通过板端验证。
+
+- 镜像名：`openvela-a733-cubie-a7z-sd-llm-bootdiag-v91-candidate.img`，2147483648 字节。
+- 镜像 SHA256：`2bdbc50c3a9cd23e3410ed363c7b0586da03bf07ade666174b573f03d081e171`。
+- 内核 SHA256：`eff6d2334588635af7ca6289cd3980fa2104bd8aa5f03fec06117ff4bbe8b987`。
