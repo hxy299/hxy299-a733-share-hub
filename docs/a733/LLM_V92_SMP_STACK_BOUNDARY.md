@@ -23,3 +23,15 @@ v91 CPU7 异常现场：ELR/LR 均为 0，X25=`40201720`，X24=`424004a0`，SP_E
 若仍出现 F0，发送全部 FAULT 行，使用 v92 ELF 映射地址；不能继续沿用 v91 地址表。若故障依然存在，检查缓存开启前后的实时栈内容和辅核异常上下文切换。
 
 恢复文件和前版本不覆盖：`a733-v91-before-stack-align-fix.bundle`；稳定镜像仍是 v88。
+
+## 离线构建结果
+
+构建退出 0，链接断言通过。System.map 中 `_s_initstack=423e9000`、`g_cpu_idlestackalloc=423f1000`、`g_idle_topstack=42401000`，栈顶/堆边界不再落在缓存行内部。官方链接脚本和异常处理文件临时覆盖均已恢复。
+
+镜像 `openvela-a733-cubie-a7z-sd-smp-stackfix-v92-candidate.img` 为 2147483648 字节。内核回读一致，ext4 检查通过、GPT 无错误（继承分区 4 尾部对齐提示）。
+
+- 内核 SHA256：`a7765e5fb63adee07e3ea48ec1881c46911837385a3a865d31aa654bb0f7a91f`。
+- 镜像 SHA256：`a8fd52d55634a1beb7710c5b8c719b6d54d4887e1369ebed30d63e6ea86ebde4`。
+- ELF、Image、System.map 与日志：`archives/llm-v92/`。
+
+这些是离线校验；板端根因验证及稳定性回归仍待用户测试。
