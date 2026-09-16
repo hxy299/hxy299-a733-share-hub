@@ -17,7 +17,7 @@
 #include "arm64_internal.h"
 
 #define REG32(a) getreg32(UINT64_C(a))
-#define REG64(a) getreg64(UINT64_C(a))
+#define REG64(a) getreg64((uintptr_t)(a))
 
 #define A733_GICR_BASE    UINT64_C(0x03460000)
 #define A733_GICR_STRIDE  UINT64_C(0x00020000)
