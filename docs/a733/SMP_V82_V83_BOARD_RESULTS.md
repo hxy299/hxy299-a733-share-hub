@@ -30,6 +30,18 @@ procfs、温度节点、TRNG、NPU 设备、SDMMC、GPT/FAT、Wi-Fi 固件与
 
 ## 扩核前的必要回归
 
+### 第二次实机回归结果
+
+用户提交的完整日志确认：`time "sleep 5"` 返回 5.0009 秒；1 MiB SD
+块读取没有报错；NPU `selftest=0 apitest=0 guards=0`，提交/完成计数为
+1/1。5 GHz 热点 706E 在重试扫描后发现，WPA2 和 DHCP 成功，获得
+`10.195.194.22/24`，网关 `10.195.194.239`。网关 ping 10/10 成功，
+RTT 9..25 ms，平均 13.5 ms。双 A55 基础回归通过，可以开始六 A55 候选。
+
+该结论不包含长期负载、SSH/FTP 吞吐、YOLO 或 LLM 数值回归；扫描曾两次
+未发现目标，第三次发现，因此无线扫描稳定性仍需观察，不能宣称所有功能
+已完全验收。原始日志归档在 `archives/smp-v83/v83-board-regression.txt`。
+
 ```text
 time "sleep 5"
 dd if=/dev/mmcsd0 of=/dev/null bs=65536 count=16
