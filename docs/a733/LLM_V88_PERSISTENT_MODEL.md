@@ -71,3 +71,38 @@ aipetllm unload
 - 标签：`a733-llm-cache-v88-candidate`。
 - 恢复包：`A733-A7Z-ALL-Files/archives/llm-v88/a733-llm-v88.bundle`。
 - 构建/打包/检查日志：同目录 build.log、package.log、verify.log。
+
+## v88 实机缓存生命周期基本验证
+
+用户回传默认六核心（mask fc）两次前向：
+
+| 次数 | load（秒） | compute（秒） | 命令总耗时（秒） |
+| --- | --- | --- | --- |
+| 首次 | 174.9839 | 0.8210 | 175.8280 |
+| 缓存命中 | 0 | 0.7909 | 0.8080 |
+
+cacheinfo 报告 resident bytes=1117320736。第二次明确 cache-hit，
+无需SD模型读取。两次28层CRC全部与v87一致，最终state=17a04f7d、
+logits=7fdfee67、argmax=6233、logit=10.4909735。
+因此本次跨命令模型驻留与前向数值回归通过。缓存命中单token前向
+约1.24次/秒（按总耗时倒数），仍不等于连续生成tok/s。
+
+内存记录（字节）：
+
+| 状态 | used | nused | nfree |
+| --- | --- | --- | --- |
+| 首次前向前 | 36080 | 89 | 4 |
+| 两次前向后、缓存驻留 | 1118717328 | 245 | 27 |
+| unload后 | 1462128 | 245 | 27 |
+
+卸载释放1117255200字节，与模型大小相差65536字节；大块模型缓存已
+释放，但使用量相较初始仍高1426048字节（约1.36MiB），分配块数也未
+恢复初值。因此不能宣称完全无泄漏。可能包含pthread/TLS/运行库常驻
+分配或未释放资源，需要重复缓存命中、反复加载/卸载及线程数量对照
+确认是否线性增长，尚未定位原因。用户未提供unload后的cacheinfo、
+并发busy测试或第二次unload，不能据此宣称所有负测完成。
+
+恢复标签：`a733-llm-cache-v88-basic-verified`。
+独立恢复包：`A733-A7Z-ALL-Files/archives/llm-v88/a733-llm-v88-basic-verified.bundle`。
+下一步优先资源生命周期审计与持久线程池，然后目录缓存及多token
+prefill/KV cache/采样生成，不改变当前六核心默认接口。
