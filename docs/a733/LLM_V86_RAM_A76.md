@@ -34,3 +34,22 @@ free
 后续：保持模型和解析目录的生命周期、矩阵行按两 A76/异构核心分工、
 多 token prefill/持续 KV cache/采样循环、量化 NEON 回归、长时间温度
 和网络/NPU 并发稳定性。当前仍只是单 token 前向，不能进行完整对话。
+
+## 候选发布存档
+
+构建源提交 `7139ad3`，WSL 增量构建通过。新增 RAM 前向、A76 包装和
+官方 libc fmemopen 已链接。官方 arch.h 临时补丁已恢复，无 .orig 残留。
+
+- 镜像：`A733-A7Z-ALL-Files/openvela-a733-cubie-a7z-sd-llm-ram-a76-v86-candidate.img`
+- 镜像大小：2147483648 字节。
+- 镜像 SHA256：`4f74489b3fabc2ed0d0663cdc1c77b3d1a1c98638c36c5b9e510fba01ee11d31`。
+- 内核 SHA256：`d55c390b75956832c5923d19ac380042b0d4cc73055816892678becf69ff3dda`。
+- ext4 检查通过，嵌入内核回读一致，GPT 报告无问题；继承的分区4
+  非2048扇区尾部对齐提示不变。
+- 恢复标签：`a733-llm-ram-a76-v86-candidate`。
+- 恢复包：`A733-A7Z-ALL-Files/archives/llm-v86/a733-llm-v86.bundle`。
+- 构建/打包/校验日志：同一目录 `build.log`、`package.log`、`verify.log`。
+
+尚未在开发板验证该新命令，不宣称数值和速度实测通过。整盘烧写会
+覆盖 TF 卡现有分区和数据，请先备份模型及板端配置。本地基底镜像
+不包含用户后来上传到 TF 卡的 Qwen GGUF；烧写后需重新传入模型。
