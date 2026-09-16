@@ -46,6 +46,7 @@ struct gguf_reader_s
 };
 
 extern int aipetllm_cxx_checkpoint(void);
+extern int aipetllm_cpu_checkpoint(void);
 extern int aipetllm_ggml_quant_checkpoint(void);
 extern int aipetllm_model_checkpoint(const char *path);
 extern int aipetllm_embedding_checkpoint(const char *path,
@@ -607,6 +608,7 @@ static void usage(void)
   puts("  aipetllm info");
   puts("  aipetllm probe [MiB]");
   puts("  aipetllm cxxcheck");
+  puts("  aipetllm cpucheck");
   puts("  aipetllm quantcheck");
   puts("  aipetllm pathcheck [model.gguf]");
   puts("  aipetllm readcheck [model.gguf]");
@@ -627,6 +629,11 @@ static void usage(void)
 
 int main(int argc, char **argv)
 {
+  if (argc == 2 && strcmp(argv[1], "cpucheck") == 0)
+    {
+      return aipetllm_cpu_checkpoint();
+    }
+
   if (argc == 2 && strcmp(argv[1], "info") == 0)
     {
       printf("backend=CPU/ARM64 model=%s\n", MODEL_DEFAULT);

@@ -17,6 +17,7 @@ if(CONFIG_SYSTEM_AIPETLLM)
     ${CONFIG_AIPETLLM_PROGNAME}
     SRCS
     aipetllm_main.c
+    aipetllm_cpucheck.c
     aipetllm_cxx.cxx
     aipetllm_bpe.cxx
     aipetllm_ggml_quant.c
