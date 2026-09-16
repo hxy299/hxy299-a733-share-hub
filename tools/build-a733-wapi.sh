@@ -13,7 +13,13 @@ backup="$(mktemp -d)"
 bash "$script_dir/check-openvela-first.sh"
 
 files=(
+  vendor/allwinnertech/chips/a733/a733_boot.c
+  vendor/allwinnertech/chips/a733/a733_hwdiag.c
   vendor/allwinnertech/chips/a733/a733_wifi_usb.c
+  vendor/allwinnertech/chips/a733/CMakeLists.txt
+  vendor/allwinnertech/chips/a733/Kconfig
+  vendor/allwinnertech/chips/a733/include/chip.h
+  vendor/allwinnertech/chips/a733/include/irq.h
   vendor/allwinnertech/boards/a733/cubie-a7z/configs/nsh/defconfig
   apps/system/a733wifi/a733wifi_main.c
   apps/system/a733wifi/Kconfig
