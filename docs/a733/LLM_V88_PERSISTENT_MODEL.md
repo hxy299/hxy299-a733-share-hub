@@ -55,3 +55,19 @@ aipetllm unload
 
 当前仍是独立单token前向，无历史KV状态，不能将缓存命中次数当作持续
 生成能力，也不预估tok/s；后续线程池/目录缓存后再接prefill和生成。
+
+## 候选构建存档
+
+源提交 `37f2e92`，WSL 构建通过；缓存控制及模型驻留状态已链接。
+官方 arch.h 临时补丁已恢复，无 .orig 残留。当前尚未实机验证缓存
+跨命令生命周期，不宣称第二次无需加载和卸载释放已测试通过。
+
+- 镜像：`A733-A7Z-ALL-Files/openvela-a733-cubie-a7z-sd-llm-cache-v88-candidate.img`
+- 大小：2147483648字节；内核1713600字节。
+- 内核SHA256：`83916fd009f0ca0cf551fcb4f85752461aaba83ddb6650b8d6002e8eaac62bc1`。
+- 镜像SHA256：`d304f200047740f1084b0b0a8adca1a88a6d4fcbee839ffb5149c350d22600de`。
+- ext4检查、嵌入内核回读和GPT检查通过；基础镜像分区4尾部非2048
+  扇区对齐提示不变。v87保留。
+- 标签：`a733-llm-cache-v88-candidate`。
+- 恢复包：`A733-A7Z-ALL-Files/archives/llm-v88/a733-llm-v88.bundle`。
+- 构建/打包/检查日志：同目录 build.log、package.log、verify.log。
