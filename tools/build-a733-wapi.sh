@@ -13,6 +13,7 @@ backup="$(mktemp -d)"
 bash "$script_dir/check-openvela-first.sh"
 
 files=(
+  nuttx/arch/arm64/src/common/arm64_fatal.c
   vendor/allwinnertech/chips/a733/a733_boot.c
   vendor/allwinnertech/chips/a733/a733_hwdiag.c
   vendor/allwinnertech/chips/a733/a733_wifi_usb.c

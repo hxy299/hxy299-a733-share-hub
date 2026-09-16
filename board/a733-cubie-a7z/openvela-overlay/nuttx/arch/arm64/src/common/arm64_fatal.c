@@ -547,11 +547,65 @@ static int arm64_exception_handler(uint64_t *regs)
  * Public Functions
  ****************************************************************************/
 
+#ifdef CONFIG_ARCH_CHIP_A733
+/* Keep diagnostics independent of the scheduler, heap and normal syslog.
+ * Do not acquire a UART lock here: the fault may have interrupted its owner.
+ */
+
+static void a733_fault_value(uint64_t mpidr, const char *name, uint64_t value)
+{
+  extern void a733_boot_marker(const char *marker);
+  static const char digits[] = "0123456789abcdef";
+  char line[80];
+  unsigned int pos = 0;
+  int shift;
+  const char *prefix = "FAULT cpu=";
+
+  while (*prefix)
+    {
+      line[pos++] = *prefix++;
+    }
+
+  for (shift = 60; shift >= 0; shift -= 4)
+    {
+      line[pos++] = digits[(mpidr >> shift) & 15];
+    }
+
+  line[pos++] = ' ';
+  while (*name && pos < 55)
+    {
+      line[pos++] = *name++;
+    }
+
+  line[pos++] = '=';
+  for (shift = 60; shift >= 0; shift -= 4)
+    {
+      line[pos++] = digits[(value >> shift) & 15];
+    }
+
+  line[pos++] = '\r';
+  line[pos++] = '\n';
+  line[pos] = '\0';
+  a733_boot_marker(line);
+}
+#endif
+
 uint64_t *arm64_fatal_handler(uint64_t *regs)
 {
 #ifdef CONFIG_ARCH_CHIP_A733
   extern void a733_boot_marker(const char *marker);
+  uint64_t fault_cpu = read_sysreg(mpidr_el1);
+  uint64_t fault_el = read_sysreg(CurrentEL);
+  uint64_t fault_esr = read_sysreg(esr_el1);
+  uint64_t fault_elr = read_sysreg(elr_el1);
+  uint64_t fault_far = read_sysreg(far_el1);
+
   a733_boot_marker("F0\r\n");
+  a733_fault_value(fault_cpu, "CurrentEL", fault_el);
+  a733_fault_value(fault_cpu, "ESR_EL1", fault_esr);
+  a733_fault_value(fault_cpu, "ELR_EL1", fault_elr);
+  a733_fault_value(fault_cpu, "FAR_EL1", fault_far);
+  a733_fault_value(fault_cpu, "regs", (uintptr_t)regs);
 #endif
 
   struct tcb_s *tcb = this_task();
