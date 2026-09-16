@@ -852,10 +852,45 @@ static int apply_normal_rope(float *values, uint64_t heads,
   return 0;
 }
 
+static int normalized_token(FILE *stream, uint64_t data_start,
+                            const struct tensor_info_s *embedding,
+                            const float *norm_weight, float epsilon,
+                            uint32_t token_id, float *input,
+                            float *normalized)
+{
+  uint64_t index;
+  double square_sum = 0.0;
+  float inverse_rms;
+
+  if (token_id >= embedding->dimensions[1] ||
+      data_start > UINT64_MAX - embedding->offset ||
+      read_dequantized_row(stream, data_start + embedding->offset,
+                           embedding, token_id, input) < 0)
+    {
+      return -EINVAL;
+    }
+
+  for (index = 0; index < embedding->dimensions[0]; index++)
+    {
+      square_sum += (double)input[index] * input[index];
+    }
+
+  inverse_rms = 1.0f /
+                sqrtf((float)(square_sum / embedding->dimensions[0]) +
+                      epsilon);
+  for (index = 0; index < embedding->dimensions[0]; index++)
+    {
+      normalized[index] = input[index] * inverse_rms * norm_weight[index];
+    }
+
+  return 0;
+}
+
 static int embedding_pipeline_checkpoint(const char *path,
                                          uint32_t token_id,
                                          int projection_mode,
-                                         uint32_t position)
+                                         uint32_t position,
+                                         uint32_t second_token_id)
 {
   struct tensor_info_s *embedding = NULL;
   struct tensor_info_s *attention_norm = NULL;
@@ -884,6 +919,12 @@ static int embedding_pipeline_checkpoint(const char *path,
   float *q_output = NULL;
   float *k_output = NULL;
   float *v_output = NULL;
+  float *second_input = NULL;
+  float *second_normalized = NULL;
+  float *second_q = NULL;
+  float *second_k = NULL;
+  float *second_v = NULL;
+  float *attention_output = NULL;
   uint64_t index;
   double square_sum = 0.0;
   double output_sum = 0.0;
@@ -1336,9 +1377,181 @@ static int embedding_pipeline_checkpoint(const char *path,
                       (size_t)attention_v->dimensions[1] * sizeof(float)));
   puts("Qwen2 layer-0 biased Q/K/V and RoPE checkpoint passed; "
        "attention scores and KV cache pending.");
+
+  if (projection_mode == 2)
+    {
+      ret = 0;
+      goto out;
+    }
+
+  if (second_token_id >= embedding->dimensions[1])
+    {
+      fputs("aipetllm: attn2 second token is outside vocabulary\n", stderr);
+      goto out;
+    }
+
+  second_input = malloc((size_t)embedding->dimensions[0] * sizeof(float));
+  second_normalized = malloc((size_t)embedding->dimensions[0] *
+                             sizeof(float));
+  second_q = malloc((size_t)attention_q->dimensions[1] * sizeof(float));
+  second_k = malloc((size_t)attention_k->dimensions[1] * sizeof(float));
+  second_v = malloc((size_t)attention_v->dimensions[1] * sizeof(float));
+  attention_output = malloc((size_t)attention_q->dimensions[1] *
+                            sizeof(float));
+  if (second_input == NULL || second_normalized == NULL ||
+      second_q == NULL || second_k == NULL || second_v == NULL ||
+      attention_output == NULL)
+    {
+      fputs("aipetllm: attn2 vector allocation failed\n", stderr);
+      goto out;
+    }
+
+  if (normalized_token(stream, data_start, embedding, weight, epsilon,
+                       second_token_id, second_input,
+                       second_normalized) < 0 ||
+      read_quantized_matvec(stream, data_start + attention_q->offset,
+                            attention_q, second_normalized, second_q) < 0 ||
+      read_quantized_matvec(stream, data_start + attention_k->offset,
+                            attention_k, second_normalized, second_k) < 0 ||
+      read_quantized_matvec(stream, data_start + attention_v->offset,
+                            attention_v, second_normalized, second_v) < 0 ||
+      add_f32_bias(stream, data_start, attention_q_bias, second_q,
+                   attention_q->dimensions[1]) < 0 ||
+      add_f32_bias(stream, data_start, attention_k_bias, second_k,
+                   attention_k->dimensions[1]) < 0 ||
+      add_f32_bias(stream, data_start, attention_v_bias, second_v,
+                   attention_v->dimensions[1]) < 0 ||
+      apply_normal_rope(second_q, head_count,
+                        attention_q->dimensions[1] / head_count,
+                        rotary_dimension, 1, frequency_base) < 0 ||
+      apply_normal_rope(second_k, head_count_kv,
+                        attention_k->dimensions[1] / head_count_kv,
+                        rotary_dimension, 1, frequency_base) < 0)
+    {
+      fputs("aipetllm: attn2 second-token QKV execution failed\n", stderr);
+      goto out;
+    }
+
+  {
+    uint64_t head_dimension = attention_q->dimensions[1] / head_count;
+    uint32_t query_per_kv = head_count / head_count_kv;
+    float score_values[64];
+    float probability_values[64];
+    float scale = 1.0f / sqrtf((float)head_dimension);
+    double context_sum = 0.0;
+    double context_square_sum = 0.0;
+    float context_minimum = 0.0f;
+    float context_maximum = 0.0f;
+    uint32_t head;
+
+    if (head_count > 32 || head_count % head_count_kv != 0)
+      {
+        fputs("aipetllm: attn2 unsupported GQA head mapping\n", stderr);
+        goto out;
+      }
+
+    for (head = 0; head < head_count; head++)
+      {
+        uint32_t kv_head = head / query_per_kv;
+        uint64_t query_base = (uint64_t)head * head_dimension;
+        uint64_t kv_base = (uint64_t)kv_head * head_dimension;
+        double score0 = 0.0;
+        double score1 = 0.0;
+        float maximum_score;
+        float exponent0;
+        float exponent1;
+        float denominator;
+        uint64_t component;
+
+        for (component = 0; component < head_dimension; component++)
+          {
+            float query = second_q[query_base + component];
+
+            score0 += (double)query * k_output[kv_base + component];
+            score1 += (double)query * second_k[kv_base + component];
+          }
+
+        score_values[head * 2] = (float)score0 * scale;
+        score_values[head * 2 + 1] = (float)score1 * scale;
+        maximum_score = fmaxf(score_values[head * 2],
+                              score_values[head * 2 + 1]);
+        exponent0 = expf(score_values[head * 2] - maximum_score);
+        exponent1 = expf(score_values[head * 2 + 1] - maximum_score);
+        denominator = exponent0 + exponent1;
+        probability_values[head * 2] = exponent0 / denominator;
+        probability_values[head * 2 + 1] = exponent1 / denominator;
+
+        for (component = 0; component < head_dimension; component++)
+          {
+            uint64_t output_index = query_base + component;
+            float value = probability_values[head * 2] *
+                          v_output[kv_base + component] +
+                          probability_values[head * 2 + 1] *
+                          second_v[kv_base + component];
+
+            attention_output[output_index] = value;
+            context_sum += value;
+            context_square_sum += (double)value * value;
+            if (output_index == 0 || value < context_minimum)
+              {
+                context_minimum = value;
+              }
+
+            if (output_index == 0 || value > context_maximum)
+              {
+                context_maximum = value;
+              }
+          }
+      }
+
+    printf("kv-cache tokens=2 kv-heads=%" PRIu32 " head-dim=%" PRIu64
+           " k-crc=%08" PRIx32 "/%08" PRIx32
+           " v-crc=%08" PRIx32 "/%08" PRIx32 "\n",
+           head_count_kv, head_dimension,
+           tensor_crc32(0, (const uint8_t *)k_output,
+                        (size_t)attention_k->dimensions[1] * sizeof(float)),
+           tensor_crc32(0, (const uint8_t *)second_k,
+                        (size_t)attention_k->dimensions[1] * sizeof(float)),
+           tensor_crc32(0, (const uint8_t *)v_output,
+                        (size_t)attention_v->dimensions[1] * sizeof(float)),
+           tensor_crc32(0, (const uint8_t *)second_v,
+                        (size_t)attention_v->dimensions[1] * sizeof(float)));
+    printf("attention query-position=1 causal-keys=2 group=%" PRIu32
+           " scale=%.9g score-crc=%08" PRIx32
+           " probability-crc=%08" PRIx32 "\n",
+           query_per_kv, (double)scale,
+           tensor_crc32(0, (const uint8_t *)score_values,
+                        (size_t)head_count * 2 * sizeof(float)),
+           tensor_crc32(0, (const uint8_t *)probability_values,
+                        (size_t)head_count * 2 * sizeof(float)));
+    for (head = 0; head < head_count && head < 3; head++)
+      {
+        printf("head[%" PRIu32 "] scores=%.7g,%.7g probs=%.7g,%.7g\n",
+               head, (double)score_values[head * 2],
+               (double)score_values[head * 2 + 1],
+               (double)probability_values[head * 2],
+               (double)probability_values[head * 2 + 1]);
+      }
+
+    printf("context-crc=%08" PRIx32
+           " sum=%.9g l2=%.9g min=%.9g max=%.9g\n",
+           tensor_crc32(0, (const uint8_t *)attention_output,
+                        (size_t)attention_q->dimensions[1] * sizeof(float)),
+           context_sum, sqrt(context_square_sum),
+           (double)context_minimum, (double)context_maximum);
+  }
+
+  puts("Qwen2 two-token causal GQA/KV-cache checkpoint passed; "
+       "attention output projection pending.");
   ret = 0;
 
 out:
+  free(attention_output);
+  free(second_v);
+  free(second_k);
+  free(second_q);
+  free(second_normalized);
+  free(second_input);
   free(v_output);
   free(k_output);
   free(q_output);
@@ -1356,16 +1569,23 @@ out:
 
 int aipetllm_embedding_checkpoint(const char *path, uint32_t token_id)
 {
-  return embedding_pipeline_checkpoint(path, token_id, 0, 0);
+  return embedding_pipeline_checkpoint(path, token_id, 0, 0, 0);
 }
 
 int aipetllm_q_projection_checkpoint(const char *path, uint32_t token_id)
 {
-  return embedding_pipeline_checkpoint(path, token_id, 1, 0);
+  return embedding_pipeline_checkpoint(path, token_id, 1, 0, 0);
 }
 
 int aipetllm_qkv_checkpoint(const char *path, uint32_t token_id,
                             uint32_t position)
 {
-  return embedding_pipeline_checkpoint(path, token_id, 2, position);
+  return embedding_pipeline_checkpoint(path, token_id, 2, position, 0);
+}
+
+int aipetllm_attention2_checkpoint(const char *path, uint32_t first_token,
+                                   uint32_t second_token)
+{
+  return embedding_pipeline_checkpoint(path, first_token, 3, 0,
+                                       second_token);
 }
