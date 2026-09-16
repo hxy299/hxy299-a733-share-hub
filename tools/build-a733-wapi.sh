@@ -83,7 +83,7 @@ for path in "${patched_files[@]}"; do
   cp "$official/$path" "$backup/$path"
 done
 
-patch --forward --batch -p1 -d "$official" \
+patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
   < "$team_dir/patches/nuttx-arm64-a733-aff1-cpuid.patch"
 
 if [[ -d "$aipet_official" ]]; then
