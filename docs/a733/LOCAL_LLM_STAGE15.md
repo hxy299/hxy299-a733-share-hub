@@ -21,3 +21,16 @@
 成功标志：
 
     Qwen2 28-layer single-token forward and LM head checkpoint passed; multi-token KV-cache generation pending.
+
+## 构建与镜像
+
+- openvela 公共 API 边界检查：通过；
+- 全量隔离构建：通过；
+- 官方工作区恢复检查：通过；
+- 内核大小：1680696 字节；
+- 内核 SHA-256：`037177bc975c1b636e855811e9baf7c2c5d3559a6f3499ad6d21d4e7de893181`；
+- 可烧写镜像：`openvela-a733-cubie-a7z-sd-aipet-forward1-v81-candidate.img`；
+- 镜像大小：2147483648 字节；
+- 镜像 SHA-256：`00ddafa52f0e039fa3be60a6f0363325d30bb89c11f7978d386cc6ecf4c6517c`。
+
+镜像已通过 ext4、内嵌内核哈希和 GPT 完整性校验。
