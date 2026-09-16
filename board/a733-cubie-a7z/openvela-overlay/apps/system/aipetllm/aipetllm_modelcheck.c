@@ -1037,6 +1037,8 @@ static int llm_pool_service(int argc, char **argv)
 
       sem_post(&g_pool_reply);
     }
+
+  return 0;
 }
 
 static int llm_pool_configure(unsigned int mask)
