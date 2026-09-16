@@ -902,6 +902,9 @@ static int embedding_pipeline_checkpoint(const char *path,
   struct tensor_info_s *attention_v_bias = NULL;
   struct tensor_info_s *attention_output_weight = NULL;
   struct tensor_info_s *ffn_norm = NULL;
+  struct tensor_info_s *ffn_gate = NULL;
+  struct tensor_info_s *ffn_up = NULL;
+  struct tensor_info_s *ffn_down = NULL;
   struct tensor_info_s *tensors = NULL;
   FILE *stream = NULL;
   uint64_t metadata_count;
@@ -931,6 +934,11 @@ static int embedding_pipeline_checkpoint(const char *path,
   float *residual_output = NULL;
   float *post_attention = NULL;
   float *ffn_norm_weight = NULL;
+  float *ffn_gate_output = NULL;
+  float *ffn_up_output = NULL;
+  float *ffn_swiglu = NULL;
+  float *ffn_down_output = NULL;
+  float *block_output = NULL;
   uint64_t index;
   double square_sum = 0.0;
   double output_sum = 0.0;
@@ -1120,6 +1128,18 @@ static int embedding_pipeline_checkpoint(const char *path,
         {
           ffn_norm = tensor;
         }
+      else if (strcmp(tensor->name, "blk.0.ffn_gate.weight") == 0)
+        {
+          ffn_gate = tensor;
+        }
+      else if (strcmp(tensor->name, "blk.0.ffn_up.weight") == 0)
+        {
+          ffn_up = tensor;
+        }
+      else if (strcmp(tensor->name, "blk.0.ffn_down.weight") == 0)
+        {
+          ffn_down = tensor;
+        }
     }
 
   {
@@ -1212,6 +1232,35 @@ static int embedding_pipeline_checkpoint(const char *path,
     {
       fputs("aipetllm: attnblock2 incompatible output/norm tensors\n",
             stderr);
+      goto out;
+    }
+
+  if (projection_mode >= 5 &&
+      (ffn_gate == NULL || ffn_up == NULL || ffn_down == NULL ||
+       ffn_gate->dimension_count != 2 ||
+       ffn_up->dimension_count != 2 ||
+       ffn_down->dimension_count != 2 ||
+       ffn_gate->dimensions[0] != embedding->dimensions[0] ||
+       ffn_up->dimensions[0] != embedding->dimensions[0] ||
+       ffn_gate->dimensions[1] == 0 ||
+       ffn_gate->dimensions[1] != ffn_up->dimensions[1] ||
+       ffn_down->dimensions[0] != ffn_gate->dimensions[1] ||
+       ffn_down->dimensions[1] != embedding->dimensions[0] ||
+       ffn_gate->dimensions[1] > 65536 ||
+       (ffn_gate->type != GGML_TYPE_F32 &&
+        ffn_gate->type != GGML_TYPE_Q4_K &&
+        ffn_gate->type != GGML_TYPE_Q6_K) ||
+       (ffn_up->type != GGML_TYPE_F32 &&
+        ffn_up->type != GGML_TYPE_Q4_K &&
+        ffn_up->type != GGML_TYPE_Q6_K) ||
+       (ffn_down->type != GGML_TYPE_F32 &&
+        ffn_down->type != GGML_TYPE_Q4_K &&
+        ffn_down->type != GGML_TYPE_Q6_K) ||
+       data_start > UINT64_MAX - ffn_gate->offset ||
+       data_start > UINT64_MAX - ffn_up->offset ||
+       data_start > UINT64_MAX - ffn_down->offset))
+    {
+      fputs("aipetllm: block2 incompatible SwiGLU tensors\n", stderr);
       goto out;
     }
 
@@ -1675,9 +1724,118 @@ static int embedding_pipeline_checkpoint(const char *path,
 
   puts("Qwen2 layer-0 attention output/residual/FFN-norm checkpoint passed; "
        "SwiGLU feed-forward network pending.");
+
+  if (projection_mode == 4)
+    {
+      ret = 0;
+      goto out;
+    }
+
+  ffn_gate_output = malloc((size_t)ffn_gate->dimensions[1] * sizeof(float));
+  ffn_up_output = malloc((size_t)ffn_up->dimensions[1] * sizeof(float));
+  ffn_swiglu = malloc((size_t)ffn_gate->dimensions[1] * sizeof(float));
+  ffn_down_output = malloc((size_t)embedding->dimensions[0] * sizeof(float));
+  block_output = malloc((size_t)embedding->dimensions[0] * sizeof(float));
+  if (ffn_gate_output == NULL || ffn_up_output == NULL ||
+      ffn_swiglu == NULL || ffn_down_output == NULL ||
+      block_output == NULL)
+    {
+      fputs("aipetllm: block2 FFN vector allocation failed\n", stderr);
+      goto out;
+    }
+
+  if (read_quantized_matvec(stream, data_start + ffn_gate->offset,
+                            ffn_gate, post_attention,
+                            ffn_gate_output) < 0 ||
+      read_quantized_matvec(stream, data_start + ffn_up->offset,
+                            ffn_up, post_attention, ffn_up_output) < 0)
+    {
+      fputs("aipetllm: block2 gate/up execution failed\n", stderr);
+      goto out;
+    }
+
+  for (index = 0; index < ffn_gate->dimensions[1]; index++)
+    {
+      float gate = ffn_gate_output[index];
+      float silu;
+
+      if (gate >= 0.0f)
+        {
+          silu = gate / (1.0f + expf(-gate));
+        }
+      else
+        {
+          float exponential = expf(gate);
+          silu = gate * exponential / (1.0f + exponential);
+        }
+
+      ffn_swiglu[index] = silu * ffn_up_output[index];
+    }
+
+  if (read_quantized_matvec(stream, data_start + ffn_down->offset,
+                            ffn_down, ffn_swiglu,
+                            ffn_down_output) < 0)
+    {
+      fputs("aipetllm: block2 down projection failed\n", stderr);
+      goto out;
+    }
+
+  {
+    double block_sum = 0.0;
+    double block_square_sum = 0.0;
+    float block_minimum = 0.0f;
+    float block_maximum = 0.0f;
+
+    for (index = 0; index < embedding->dimensions[0]; index++)
+      {
+        float value = residual_output[index] + ffn_down_output[index];
+
+        block_output[index] = value;
+        block_sum += value;
+        block_square_sum += (double)value * value;
+        if (index == 0 || value < block_minimum)
+          {
+            block_minimum = value;
+          }
+
+        if (index == 0 || value > block_maximum)
+          {
+            block_maximum = value;
+          }
+      }
+
+    printf("swiglu gate=%s/%s up=%s/%s hidden=%" PRIu64 "\n",
+           ffn_gate->name, tensor_type_name(ffn_gate->type),
+           ffn_up->name, tensor_type_name(ffn_up->type),
+           ffn_gate->dimensions[1]);
+    printf("ffn-crc gate=%08" PRIx32 " up=%08" PRIx32
+           " swiglu=%08" PRIx32 " down=%08" PRIx32 "\n",
+           tensor_crc32(0, (const uint8_t *)ffn_gate_output,
+                        (size_t)ffn_gate->dimensions[1] * sizeof(float)),
+           tensor_crc32(0, (const uint8_t *)ffn_up_output,
+                        (size_t)ffn_up->dimensions[1] * sizeof(float)),
+           tensor_crc32(0, (const uint8_t *)ffn_swiglu,
+                        (size_t)ffn_gate->dimensions[1] * sizeof(float)),
+           tensor_crc32(0, (const uint8_t *)ffn_down_output,
+                        (size_t)embedding->dimensions[0] * sizeof(float)));
+    printf("block-output-crc=%08" PRIx32
+           " sum=%.9g l2=%.9g min=%.9g max=%.9g\n",
+           tensor_crc32(0, (const uint8_t *)block_output,
+                        (size_t)embedding->dimensions[0] * sizeof(float)),
+           block_sum, sqrt(block_square_sum),
+           (double)block_minimum, (double)block_maximum);
+  }
+
+  puts("Qwen2 layer-0 full Transformer block checkpoint passed; "
+       "multi-layer execution pending.");
   ret = 0;
 
 out:
+  free(block_output);
+  free(ffn_down_output);
+  free(ffn_swiglu);
+  free(ffn_up_output);
+  free(ffn_gate_output);
   free(ffn_norm_weight);
   free(post_attention);
   free(residual_output);
@@ -1731,5 +1889,13 @@ int aipetllm_attention_block2_checkpoint(const char *path,
                                          uint32_t second_token)
 {
   return embedding_pipeline_checkpoint(path, first_token, 4, 0,
+                                       second_token);
+}
+
+int aipetllm_transformer_block2_checkpoint(const char *path,
+                                           uint32_t first_token,
+                                           uint32_t second_token)
+{
+  return embedding_pipeline_checkpoint(path, first_token, 5, 0,
                                        second_token);
 }

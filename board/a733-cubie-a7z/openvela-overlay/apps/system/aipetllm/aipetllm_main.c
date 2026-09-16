@@ -58,8 +58,11 @@ extern int aipetllm_attention2_checkpoint(const char *path,
                                           uint32_t first_token,
                                           uint32_t second_token);
 extern int aipetllm_attention_block2_checkpoint(const char *path,
-                                                uint32_t first_token,
-                                                uint32_t second_token);
+                                                 uint32_t first_token,
+                                                 uint32_t second_token);
+extern int aipetllm_transformer_block2_checkpoint(const char *path,
+                                                   uint32_t first_token,
+                                                   uint32_t second_token);
 extern int aipetllm_tokenizer_checkpoint(const char *path);
 extern int aipetllm_decode_checkpoint(const char *path, int id_count,
                                       char *const id_text[]);
@@ -615,6 +618,7 @@ static void usage(void)
   puts("  aipetllm qkv model.gguf token-id position");
   puts("  aipetllm attn2 model.gguf first-token-id second-token-id");
   puts("  aipetllm attnblock2 model.gguf first-token-id second-token-id");
+  puts("  aipetllm block2 model.gguf first-token-id second-token-id");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
 
@@ -760,6 +764,26 @@ int main(int argc, char **argv)
       return aipetllm_attention_block2_checkpoint(argv[2],
                                                   (uint32_t)first,
                                                   (uint32_t)second);
+    }
+
+  if (argc == 5 && strcmp(argv[1], "block2") == 0)
+    {
+      char *first_end;
+      char *second_end;
+      unsigned long first = strtoul(argv[3], &first_end, 10);
+      unsigned long second = strtoul(argv[4], &second_end, 10);
+
+      if (first_end == argv[3] || *first_end != '\0' ||
+          second_end == argv[4] || *second_end != '\0' ||
+          first > UINT32_MAX || second > UINT32_MAX)
+        {
+          fputs("aipetllm: block2 token IDs must be uint32\n", stderr);
+          return 1;
+        }
+
+      return aipetllm_transformer_block2_checkpoint(argv[2],
+                                                     (uint32_t)first,
+                                                     (uint32_t)second);
     }
 
   if ((argc == 2 || argc == 3) && strcmp(argv[1], "pathcheck") == 0)
