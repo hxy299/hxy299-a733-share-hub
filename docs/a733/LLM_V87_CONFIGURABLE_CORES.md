@@ -1,0 +1,42 @@
+# LLM v87：可选核心列表与矩阵行并行
+
+恢复基准为 v86 前向实机通过标签。保留系统默认 CPUSET=0xff，不将
+Wi-Fi/SSH/FTP 强行绑定 CPU0/1；操作系统仍使用已有 SMP 调度器，
+这不是移植 Linux 调度器。默认只限制 LLM 使用 CPU2..7，因此 CPU0/1
+不承担本命令的矩阵工作，但其他服务仍可使用全部八核。
+
+命令：`aipetllm forwardfast model.gguf token-id [core-list]`。
+默认列表 `2,3,4,5,6,7`，掩码 fc。支持 `6,7`、`6`、`2,3,6,7` 等。
+核心编号必须为0..7、逗号分隔且不可重复，不支持范围写法或带空格列表。
+单核心沿用 v86 串行算法，多核心对 Q4_K/Q6_K 矩阵行创建 pthread。
+
+调用者只在所选核心上运行，结束后恢复原亲和掩码。主线程独占 FILE
+读取，将当前矩阵复制到共享只读 RAM；每个工作线程绑定一个选定核心，
+先确认迁移完成，再写入不重叠输出行。输入只量化一次，点积次序不变。
+工作行按 A76:A55=3:1 初始比例分配，等待全部线程结束再消费输出。
+线程创建/绑核失败明确报错，不将未完成输出当作成功结果。
+
+注意：按矩阵创建线程，尚非持久线程池。模型仍每次完整载入并释放，
+当前矩阵另需临时内存（上限256 MiB）。这可能增加内存带宽和线程创建
+开销；六核心未必快于两 A76，必须实测。不得宣称完整生成已经可用。
+
+## 实机对照
+
+先备份 TF 卡模型和配置，再烧写。镜像不包含后来传入的 GGUF 模型。
+单核对照可先跑；每个命令正常完成后检查 free，避免并发多份大模型。
+
+```text
+aipetllm cpucheck
+free
+time "aipetllm forwardfast /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf 9707 6"
+free
+time "aipetllm forwardfast /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf 9707 6,7"
+free
+time "aipetllm forwardfast /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf 9707"
+free
+```
+
+三种模式应有相同逐层CRC、final-state-crc=17a04f7d、
+logits-crc=7fdfee67、argmax=6233。比较 compute 而非包含模型读取的
+总时间。测试同时检查另一终端 Wi-Fi/SSH 响应，长期稳定性仍待验证。
+下一步采用长期模型/目录缓存和线程池，再实现多 token KV cache。

@@ -48,7 +48,8 @@ struct gguf_reader_s
 extern int aipetllm_cxx_checkpoint(void);
 extern int aipetllm_cpu_checkpoint(void);
 extern int aipetllm_forward_fast_checkpoint(const char *path,
-                                           uint32_t token_id);
+                                           uint32_t token_id,
+                                           unsigned int cpu_mask);
 extern int aipetllm_ggml_quant_checkpoint(void);
 extern int aipetllm_model_checkpoint(const char *path);
 extern int aipetllm_embedding_checkpoint(const char *path,
@@ -626,7 +627,7 @@ static void usage(void)
   puts("  aipetllm attnblock2 model.gguf first-token-id second-token-id");
   puts("  aipetllm block2 model.gguf first-token-id second-token-id");
   puts("  aipetllm forward1 model.gguf token-id");
-  puts("  aipetllm forwardfast model.gguf token-id (RAM + one A76)");
+  puts("  aipetllm forwardfast model.gguf token-id [cores: 2,3,4,5,6,7]");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
 
@@ -799,8 +800,8 @@ int main(int argc, char **argv)
                                                      (uint32_t)second);
     }
 
-  if (argc == 4 && (strcmp(argv[1], "forward1") == 0 ||
-                    strcmp(argv[1], "forwardfast") == 0))
+  if ((argc == 4 && strcmp(argv[1], "forward1") == 0) ||
+      ((argc == 4 || argc == 5) && strcmp(argv[1], "forwardfast") == 0))
     {
       char *end;
       unsigned long token = strtoul(argv[3], &end, 10);
@@ -813,7 +814,45 @@ int main(int argc, char **argv)
 
       if (strcmp(argv[1], "forwardfast") == 0)
         {
-          return aipetllm_forward_fast_checkpoint(argv[2], (uint32_t)token);
+          unsigned int mask = 0xfc;
+          if (argc == 5)
+            {
+              const char *cursor = argv[4];
+              mask = 0;
+              do
+                {
+                  unsigned int cpu;
+                  if (*cursor < '0' || *cursor > '7')
+                    {
+                      fputs("forwardfast: cores must be unique IDs 0..7, "
+                            "comma separated\n", stderr);
+                      return 1;
+                    }
+
+                  cpu = (unsigned int)(*cursor++ - '0');
+                  if (mask & (1u << cpu))
+                    {
+                      fputs("forwardfast: duplicate core\n", stderr);
+                      return 1;
+                    }
+
+                  mask |= 1u << cpu;
+                  if (*cursor == '\0')
+                    {
+                      break;
+                    }
+
+                  if (*cursor++ != ',' || *cursor == '\0')
+                    {
+                      fputs("forwardfast: invalid core list\n", stderr);
+                      return 1;
+                    }
+                }
+              while (1);
+            }
+
+          return aipetllm_forward_fast_checkpoint(argv[2], (uint32_t)token,
+                                                   mask);
         }
 
       return aipetllm_forward1_checkpoint(argv[2], (uint32_t)token);

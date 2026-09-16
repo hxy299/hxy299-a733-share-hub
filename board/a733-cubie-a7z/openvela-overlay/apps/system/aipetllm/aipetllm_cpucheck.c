@@ -10,46 +10,45 @@
 #include <unistd.h>
 
 int aipetllm_cpu_checkpoint(void);
-int aipetllm_forward_ram_checkpoint(const char *path, uint32_t token_id);
-int aipetllm_forward_fast_checkpoint(const char *path, uint32_t token_id);
+int aipetllm_forward_ram_checkpoint(const char *path, uint32_t token_id,
+                                   unsigned int cpu_mask);
+int aipetllm_forward_fast_checkpoint(const char *path, uint32_t token_id,
+                                    unsigned int cpu_mask);
 
-int aipetllm_forward_fast_checkpoint(const char *path, uint32_t token_id)
+int aipetllm_forward_fast_checkpoint(const char *path, uint32_t token_id,
+                                    unsigned int cpu_mask)
 {
   cpu_set_t original = 0;
   cpu_set_t selected = 0;
-  uint64_t midr;
-  int wait;
+  int count = 0;
+  int cpu;
   int result = 1;
 
-  if (CONFIG_SMP_NCPUS < 8 ||
+  if (CONFIG_SMP_NCPUS != 8 || cpu_mask == 0 || (cpu_mask & ~0xffu) ||
       sched_getaffinity(0, sizeof(original), &original) < 0)
     {
       fputs("forwardfast: verified eight-CPU platform required\n", stderr);
       return 1;
     }
 
-  CPU_SET(6, &selected);
+  for (cpu = 0; cpu < 8; cpu++)
+    {
+      if (cpu_mask & (1u << cpu))
+        {
+          CPU_SET(cpu, &selected);
+          count++;
+        }
+    }
   if (sched_setaffinity(0, sizeof(selected), &selected) < 0)
     {
-      fputs("forwardfast: cannot select CPU6\n", stderr);
+      fputs("forwardfast: cannot select requested cores\n", stderr);
       return 1;
     }
 
-  for (wait = 0; wait < 100 && sched_getcpu() != 6; wait++)
-    {
-      usleep(1000);
-    }
-
-  __asm__ volatile("mrs %0, midr_el1" : "=r"(midr));
-  if (sched_getcpu() == 6 && ((midr >> 4) & 0xfff) == 0xd0b)
-    {
-      puts("forwardfast: CPU6 Cortex-A76; one compute thread");
-      result = aipetllm_forward_ram_checkpoint(path, token_id);
-    }
-  else
-    {
-      fputs("forwardfast: A76 migration/identity failed\n", stderr);
-    }
+  printf("forwardfast: cores-mask=%02x workers=%d; "
+         "A76:A55 row weight=3:1; system scheduling unchanged\n",
+         cpu_mask, count);
+  result = aipetllm_forward_ram_checkpoint(path, token_id, cpu_mask);
 
   if (sched_setaffinity(0, sizeof(original), &original) < 0)
     {
