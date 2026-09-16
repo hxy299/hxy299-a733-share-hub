@@ -673,7 +673,7 @@ static int read_quantized_matvec(FILE *stream, uint64_t absolute_offset,
 
   if (tensor->dimension_count != 2 || tensor->dimensions[0] == 0 ||
       tensor->dimensions[0] > INT_MAX || tensor->dimensions[1] == 0 ||
-      tensor->dimensions[1] > 65536)
+      tensor->dimensions[1] > 262144)
     {
       return -EINVAL;
     }
@@ -886,6 +886,355 @@ static int normalized_token(FILE *stream, uint64_t data_start,
   return 0;
 }
 
+static struct tensor_info_s *find_tensor(struct tensor_info_s *tensors,
+                                         uint64_t tensor_count,
+                                         const char *name)
+{
+  uint64_t index;
+
+  for (index = 0; index < tensor_count; index++)
+    {
+      if (strcmp(tensors[index].name, name) == 0)
+        {
+          return &tensors[index];
+        }
+    }
+
+  return NULL;
+}
+
+static int rmsnorm_vector(FILE *stream, uint64_t data_start,
+                          const struct tensor_info_s *norm_tensor,
+                          const float *input, uint64_t hidden,
+                          float epsilon, float *weight, float *output)
+{
+  double square_sum = 0.0;
+  float inverse_rms;
+  uint64_t index;
+
+  if (norm_tensor == NULL || norm_tensor->dimension_count != 1 ||
+      norm_tensor->dimensions[0] != hidden ||
+      norm_tensor->type != GGML_TYPE_F32 ||
+      data_start > UINT64_MAX - norm_tensor->offset ||
+      read_dequantized_row(stream, data_start + norm_tensor->offset,
+                           norm_tensor, 0, weight) < 0)
+    {
+      return -EINVAL;
+    }
+
+  for (index = 0; index < hidden; index++)
+    {
+      square_sum += (double)input[index] * input[index];
+    }
+
+  inverse_rms = 1.0f /
+                sqrtf((float)(square_sum / hidden) + epsilon);
+  for (index = 0; index < hidden; index++)
+    {
+      output[index] = input[index] * inverse_rms * weight[index];
+    }
+
+  return 0;
+}
+
+static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
+                                     struct tensor_info_s *tensors,
+                                     uint64_t tensor_count,
+                                     struct tensor_info_s *embedding,
+                                     uint32_t token_id,
+                                     uint32_t block_count,
+                                     uint32_t head_count,
+                                     uint32_t head_count_kv,
+                                     float epsilon)
+{
+  struct tensor_info_s *output_norm;
+  struct tensor_info_s *output_weight;
+  float *state = NULL;
+  float *normalized = NULL;
+  float *norm_weight = NULL;
+  float *value = NULL;
+  float *context = NULL;
+  float *projected = NULL;
+  float *gate = NULL;
+  float *up = NULL;
+  float *swiglu = NULL;
+  float *down = NULL;
+  float *logits = NULL;
+  uint64_t hidden;
+  uint64_t ffn_hidden = 0;
+  uint64_t head_dimension;
+  uint64_t index;
+  uint32_t layer;
+  int result = 1;
+
+  if (embedding == NULL || embedding->dimension_count != 2 ||
+      token_id >= embedding->dimensions[1] || block_count == 0 ||
+      block_count > QWEN_LAYER_LIMIT || head_count == 0 ||
+      head_count_kv == 0 || head_count % head_count_kv != 0)
+    {
+      fputs("aipetllm: forward1 invalid model metadata\n", stderr);
+      return 1;
+    }
+
+  hidden = embedding->dimensions[0];
+  head_dimension = hidden / head_count;
+  if (hidden == 0 || hidden > 65536 || hidden % head_count != 0)
+    {
+      fputs("aipetllm: forward1 invalid hidden/head dimensions\n", stderr);
+      return 1;
+    }
+
+  state = malloc((size_t)hidden * sizeof(float));
+  normalized = malloc((size_t)hidden * sizeof(float));
+  norm_weight = malloc((size_t)hidden * sizeof(float));
+  context = malloc((size_t)hidden * sizeof(float));
+  projected = malloc((size_t)hidden * sizeof(float));
+  if (state == NULL || normalized == NULL || norm_weight == NULL ||
+      context == NULL || projected == NULL ||
+      read_dequantized_row(stream, data_start + embedding->offset,
+                           embedding, token_id, state) < 0)
+    {
+      fputs("aipetllm: forward1 state allocation/load failed\n", stderr);
+      goto out;
+    }
+
+  printf("forward1 token=%" PRIu32 " layers=%" PRIu32
+         " hidden=%" PRIu64 " heads=%" PRIu32 "/%" PRIu32 "\n",
+         token_id, block_count, hidden, head_count, head_count_kv);
+
+  for (layer = 0; layer < block_count; layer++)
+    {
+      struct tensor_info_s *attention_norm;
+      struct tensor_info_s *attention_v;
+      struct tensor_info_s *attention_v_bias;
+      struct tensor_info_s *attention_output;
+      struct tensor_info_s *ffn_norm;
+      struct tensor_info_s *ffn_gate;
+      struct tensor_info_s *ffn_up;
+      struct tensor_info_s *ffn_down;
+      char name[GGUF_NAME_MAX];
+      uint64_t value_dimensions;
+      uint64_t query_per_kv = head_count / head_count_kv;
+      uint32_t head;
+
+#define FIND_LAYER_TENSOR(variable, suffix)                                  \
+      do                                                                     \
+        {                                                                    \
+          snprintf(name, sizeof(name), "blk.%" PRIu32 "." suffix, layer);   \
+          variable = find_tensor(tensors, tensor_count, name);               \
+        }                                                                    \
+      while (0)
+
+      FIND_LAYER_TENSOR(attention_norm, "attn_norm.weight");
+      FIND_LAYER_TENSOR(attention_v, "attn_v.weight");
+      FIND_LAYER_TENSOR(attention_v_bias, "attn_v.bias");
+      FIND_LAYER_TENSOR(attention_output, "attn_output.weight");
+      FIND_LAYER_TENSOR(ffn_norm, "ffn_norm.weight");
+      FIND_LAYER_TENSOR(ffn_gate, "ffn_gate.weight");
+      FIND_LAYER_TENSOR(ffn_up, "ffn_up.weight");
+      FIND_LAYER_TENSOR(ffn_down, "ffn_down.weight");
+#undef FIND_LAYER_TENSOR
+
+      if (attention_v == NULL || attention_output == NULL ||
+          ffn_gate == NULL || ffn_up == NULL || ffn_down == NULL ||
+          attention_v->dimension_count != 2 ||
+          attention_v->dimensions[0] != hidden ||
+          attention_v->dimensions[1] != head_count_kv * head_dimension ||
+          attention_output->dimension_count != 2 ||
+          attention_output->dimensions[0] != hidden ||
+          attention_output->dimensions[1] != hidden ||
+          ffn_gate->dimension_count != 2 ||
+          ffn_gate->dimensions[0] != hidden ||
+          ffn_up->dimension_count != 2 ||
+          ffn_up->dimensions[0] != hidden ||
+          ffn_up->dimensions[1] != ffn_gate->dimensions[1] ||
+          ffn_down->dimension_count != 2 ||
+          ffn_down->dimensions[0] != ffn_gate->dimensions[1] ||
+          ffn_down->dimensions[1] != hidden)
+        {
+          fprintf(stderr, "aipetllm: forward1 layer %" PRIu32
+                          " tensor layout mismatch\n", layer);
+          goto out;
+        }
+
+      if (layer == 0)
+        {
+          ffn_hidden = ffn_gate->dimensions[1];
+          value = malloc((size_t)attention_v->dimensions[1] * sizeof(float));
+          gate = malloc((size_t)ffn_hidden * sizeof(float));
+          up = malloc((size_t)ffn_hidden * sizeof(float));
+          swiglu = malloc((size_t)ffn_hidden * sizeof(float));
+          down = malloc((size_t)hidden * sizeof(float));
+          if (value == NULL || gate == NULL || up == NULL ||
+              swiglu == NULL || down == NULL)
+            {
+              fputs("aipetllm: forward1 work allocation failed\n", stderr);
+              goto out;
+            }
+        }
+      else if (ffn_gate->dimensions[1] != ffn_hidden)
+        {
+          fputs("aipetllm: forward1 inconsistent FFN width\n", stderr);
+          goto out;
+        }
+
+      value_dimensions = attention_v->dimensions[1];
+      if (rmsnorm_vector(stream, data_start, attention_norm, state,
+                         hidden, epsilon, norm_weight, normalized) < 0 ||
+          read_quantized_matvec(stream, data_start + attention_v->offset,
+                                attention_v, normalized, value) < 0 ||
+          add_f32_bias(stream, data_start, attention_v_bias, value,
+                       value_dimensions) < 0)
+        {
+          fprintf(stderr, "aipetllm: forward1 layer %" PRIu32
+                          " attention input failed\n", layer);
+          goto out;
+        }
+
+      for (head = 0; head < head_count; head++)
+        {
+          uint64_t source = (uint64_t)(head / query_per_kv) *
+                            head_dimension;
+          uint64_t destination = (uint64_t)head * head_dimension;
+
+          memcpy(&context[destination], &value[source],
+                 (size_t)head_dimension * sizeof(float));
+        }
+
+      if (read_quantized_matvec(stream,
+                                data_start + attention_output->offset,
+                                attention_output, context, projected) < 0)
+        {
+          fprintf(stderr, "aipetllm: forward1 layer %" PRIu32
+                          " attention output failed\n", layer);
+          goto out;
+        }
+
+      for (index = 0; index < hidden; index++)
+        {
+          state[index] += projected[index];
+        }
+
+      if (rmsnorm_vector(stream, data_start, ffn_norm, state, hidden,
+                         epsilon, norm_weight, normalized) < 0 ||
+          read_quantized_matvec(stream, data_start + ffn_gate->offset,
+                                ffn_gate, normalized, gate) < 0 ||
+          read_quantized_matvec(stream, data_start + ffn_up->offset,
+                                ffn_up, normalized, up) < 0)
+        {
+          fprintf(stderr, "aipetllm: forward1 layer %" PRIu32
+                          " FFN input failed\n", layer);
+          goto out;
+        }
+
+      for (index = 0; index < ffn_hidden; index++)
+        {
+          float exponential;
+          float silu;
+
+          if (gate[index] >= 0.0f)
+            {
+              silu = gate[index] / (1.0f + expf(-gate[index]));
+            }
+          else
+            {
+              exponential = expf(gate[index]);
+              silu = gate[index] * exponential / (1.0f + exponential);
+            }
+
+          swiglu[index] = silu * up[index];
+        }
+
+      if (read_quantized_matvec(stream, data_start + ffn_down->offset,
+                                ffn_down, swiglu, down) < 0)
+        {
+          fprintf(stderr, "aipetllm: forward1 layer %" PRIu32
+                          " FFN down failed\n", layer);
+          goto out;
+        }
+
+      for (index = 0; index < hidden; index++)
+        {
+          state[index] += down[index];
+        }
+
+      printf("layer[%" PRIu32 "] state-crc=%08" PRIx32 "\n",
+             layer,
+             tensor_crc32(0, (const uint8_t *)state,
+                          (size_t)hidden * sizeof(float)));
+    }
+
+  output_norm = find_tensor(tensors, tensor_count, "output_norm.weight");
+  output_weight = find_tensor(tensors, tensor_count, "output.weight");
+  if (output_weight == NULL)
+    {
+      output_weight = embedding;
+    }
+
+  if (rmsnorm_vector(stream, data_start, output_norm, state, hidden,
+                     epsilon, norm_weight, normalized) < 0 ||
+      output_weight->dimension_count != 2 ||
+      output_weight->dimensions[0] != hidden ||
+      output_weight->dimensions[1] == 0 ||
+      output_weight->dimensions[1] > 262144)
+    {
+      fputs("aipetllm: forward1 output tensor mismatch\n", stderr);
+      goto out;
+    }
+
+  logits = malloc((size_t)output_weight->dimensions[1] * sizeof(float));
+  if (logits == NULL ||
+      read_quantized_matvec(stream, data_start + output_weight->offset,
+                            output_weight, normalized, logits) < 0)
+    {
+      fputs("aipetllm: forward1 LM head failed\n", stderr);
+      goto out;
+    }
+
+  {
+    uint64_t maximum_index = 0;
+    float maximum_logit = logits[0];
+
+    for (index = 1; index < output_weight->dimensions[1]; index++)
+      {
+        if (logits[index] > maximum_logit)
+          {
+            maximum_logit = logits[index];
+            maximum_index = index;
+          }
+      }
+
+    printf("final-state-crc=%08" PRIx32
+           " logits-crc=%08" PRIx32
+           " argmax=%" PRIu64 " logit=%.9g vocab=%" PRIu64 "\n",
+           tensor_crc32(0, (const uint8_t *)normalized,
+                        (size_t)hidden * sizeof(float)),
+           tensor_crc32(0, (const uint8_t *)logits,
+                        (size_t)output_weight->dimensions[1] *
+                        sizeof(float)),
+           maximum_index, (double)maximum_logit,
+           output_weight->dimensions[1]);
+  }
+
+  puts("Qwen2 28-layer single-token forward and LM head checkpoint passed; "
+       "multi-token KV-cache generation pending.");
+  result = 0;
+
+out:
+  free(logits);
+  free(down);
+  free(swiglu);
+  free(up);
+  free(gate);
+  free(projected);
+  free(context);
+  free(value);
+  free(norm_weight);
+  free(normalized);
+  free(state);
+  return result;
+}
+
 static int embedding_pipeline_checkpoint(const char *path,
                                          uint32_t token_id,
                                          int projection_mode,
@@ -916,6 +1265,7 @@ static int embedding_pipeline_checkpoint(const char *path,
   uint32_t head_count = 0;
   uint32_t head_count_kv = 0;
   uint32_t rotary_dimension = 0;
+  uint32_t block_count = 0;
   float epsilon = 1.0e-6f;
   float frequency_base = 1000000.0f;
   float *input = NULL;
@@ -1010,6 +1360,14 @@ static int embedding_pipeline_checkpoint(const char *path,
                type == GGUF_TYPE_UINT32)
         {
           if (read_exact(stream, &head_count_kv, sizeof(head_count_kv)) < 0)
+            {
+              goto out;
+            }
+        }
+      else if (strstr(key, ".block_count") != NULL &&
+               type == GGUF_TYPE_UINT32)
+        {
+          if (read_exact(stream, &block_count, sizeof(block_count)) < 0)
             {
               goto out;
             }
@@ -1152,6 +1510,15 @@ static int embedding_pipeline_checkpoint(const char *path,
     data_start = ((uint64_t)directory_end + alignment - 1) &
                  ~(uint64_t)(alignment - 1);
   }
+
+  if (projection_mode == 6)
+    {
+      ret = qwen2_forward1_checkpoint(stream, data_start, tensors,
+                                      tensor_count, embedding, token_id,
+                                      block_count, head_count,
+                                      head_count_kv, epsilon);
+      goto out;
+    }
 
   if (embedding == NULL || attention_norm == NULL ||
       embedding->dimension_count != 2 ||
@@ -1898,4 +2265,9 @@ int aipetllm_transformer_block2_checkpoint(const char *path,
 {
   return embedding_pipeline_checkpoint(path, first_token, 5, 0,
                                        second_token);
+}
+
+int aipetllm_forward1_checkpoint(const char *path, uint32_t token_id)
+{
+  return embedding_pipeline_checkpoint(path, token_id, 6, 0, 0);
 }
