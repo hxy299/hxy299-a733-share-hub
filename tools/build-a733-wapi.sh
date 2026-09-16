@@ -123,6 +123,9 @@ grep -E 'CONFIG_(NETDEV_WIRELESS_IOCTL|WIRELESS_WAPI|WIRELESS_WAPI_CMDTOOL)' \
   "$build/.config"
 
 grep -qx 'CONFIG_SMP=y' "$build/.config"
-grep -qx 'CONFIG_SMP_NCPUS=2' "$build/.config"
+expected_ncpus=$(sed -n 's/^CONFIG_SMP_NCPUS=//p' \
+  "$overlay/vendor/allwinnertech/boards/a733/cubie-a7z/configs/nsh/defconfig")
+[[ "$expected_ncpus" =~ ^[2-8]$ ]]
+grep -qx "CONFIG_SMP_NCPUS=$expected_ncpus" "$build/.config"
 grep -qx 'CONFIG_ARCH_HAVE_MULTICPU=y' "$build/.config"
 sha256sum "$build/nuttx.bin"
