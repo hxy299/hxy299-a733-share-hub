@@ -19,3 +19,15 @@
 
 本阶段完成后，单层 Qwen2 Transformer 的所有主要计算算子均已闭环。下一步将把同一执行器
 参数化并推广到 28 层，同时引入可变长度 KV cache、最终 RMSNorm、LM head 与采样循环。
+
+## 构建与镜像
+
+- openvela 公共 API 边界检查：通过；
+- 全量隔离构建：通过；
+- 官方工作区自动恢复检查：通过；
+- 内核大小：1676600 字节；
+- 内核 SHA-256：`74efaa420cfaaa210326036f50e5a78132c5f7d5380df11985ccc4a4ada089c1`；
+- 可烧写镜像：`openvela-a733-cubie-a7z-sd-aipet-block-v80-candidate.img`；
+- 镜像 SHA-256：`9ae8f21eecdc33226d4824fd0a1756ffbaf240c8d6a32e1d50c4ccdd23c23a8c`。
+
+镜像已通过 ext4 文件系统检查、内嵌内核字节数与 SHA-256 一致性检查以及 GPT 校验。
