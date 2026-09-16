@@ -1,0 +1,69 @@
+# LLM v89：跨命令工作线程服务与资源审计
+
+恢复点：`a733-llm-cache-v88-basic-verified`。v88已经实测缓存命中总耗时
+0.8080秒、CRC一致，但unload后较初始仍多1426048字节，原因尚未定位。
+本阶段只完善计算服务生命周期，不宣称此前残留必定是pthread泄漏。
+
+官方工作区 `nuttx/sched/pthread/pthread_join.c` 拒绝不同task group之间
+的join（EINVAL）。因此常驻线程不能直接由短生命的前向命令创建，再
+由另一个命令回收。本次使用常驻kthread `a733-llm-pool`统一创建/join
+计算pthread，前向命令通过请求/响应semaphore访问该服务。服务由当前
+官方openvela内核提供的kthread/pthread/semaphore API构建，不改公共
+调度代码，不移植Linux调度器。
+
+同一核心列表下，首次矩阵创建对应工作线程，以后矩阵/命令复用这些
+线程。切换核心列表时服务先停止并join旧工作线程，再建立新线程；
+默认仍CPU2..7、A76:A55=3:1。计算工作线程绑定所选核心，服务协调
+线程也使用所选掩码。输入量化、输出行切分、直接RAM权重路径不变。
+每个矩阵全部完成后，清空工作槽中的临时指针再允许主线程释放缓冲区。
+
+`unload`先请求服务停止/join所有计算线程，确认后才释放模型。
+服务协调kthread本身保留（8192字节栈与少量内核资源），睡眠等待后续
+请求，不忙轮询；卸载后恢复其亲和掩码0xff。因此卸载后不期待与冷启动
+内存完全相同，关键是稳定平台而非每次增长。service/sem控制存储静态
+分配，不能在服务尚未返回时释放。join失败时保留模型，禁止不安全释放。
+初始化失败清理已初始化semaphore；工作线程创建失败明确报错，可用
+unload请求服务回收已创建的部分线程。
+
+`cacheinfo`增加：pool pid、mask、workers、created累计创建数、matrices
+累计矩阵数。同核心重复前向created应不增加；换核心允许增加；unload
+后workers=0，created和matrices保留诊断历史，服务pid仍存在。
+本阶段尚未完成强制kill/SIGINT回收审计，回归请等待正常完成。
+
+## 实机测试
+
+整盘烧写前备份模型和板端配置，镜像不包含后来上传的Qwen模型。
+按行执行，先完成首次模型载入，再连续重复同一命令至少5次：
+
+```text
+free
+aipetllm cacheinfo
+time "aipetllm forwardfast /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf 9707"
+aipetllm cacheinfo
+ps
+free
+time "aipetllm forwardfast /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf 9707"
+aipetllm cacheinfo
+free
+```
+
+同mask命令应cache-hit、created保持6、每次增加矩阵计数。
+CRC与v88相同：state=17a04f7d、logits=7fdfee67、argmax=6233。
+随后测试切核和卸载：
+
+```text
+time "aipetllm forwardfast /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf 9707 6,7"
+aipetllm cacheinfo
+ps
+aipetllm unload
+aipetllm cacheinfo
+ps
+free
+aipetllm unload
+```
+
+切核后mask=c0、workers=2，cache-hit不读模型；卸载后empty/workers=0。
+重复载入/命中/卸载至少3轮，比较卸载后used、nused、ps是否稳定。
+线程池不能证明所有残留资源已修复，需据上述数据继续定位。
+并发busy、网络/SSH响应和温度压力仍待测试。目录缓存、真实multi-token
+prefill/KV cache、LM采样/连续生成尚未实现，后续单独推进。

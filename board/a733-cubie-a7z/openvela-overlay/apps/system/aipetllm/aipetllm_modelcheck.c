@@ -9,6 +9,7 @@
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -17,6 +18,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include <nuttx/kthread.h>
 
 #include "ggml.h"
 #define GGML_COMMON_DECL_C
@@ -69,6 +71,8 @@ static pthread_mutex_t g_model_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t *g_model_cache;
 static size_t g_model_bytes;
 static char g_model_path[1024];
+static int llm_pool_configure(unsigned int mask);
+static void llm_pool_info(void);
 
 int aipetllm_cache_control(int unload)
 {
@@ -80,6 +84,13 @@ int aipetllm_cache_control(int unload)
 
   if (unload)
     {
+      if (llm_pool_configure(0) < 0)
+        {
+          pthread_mutex_unlock(&g_model_lock);
+          fputs("llm-cache: pool shutdown failed; model retained\n", stderr);
+          return 1;
+        }
+
       free(g_model_cache);
       g_model_cache = NULL;
       g_model_bytes = 0;
@@ -91,6 +102,7 @@ int aipetllm_cache_control(int unload)
       printf("llm-cache: state=%s bytes=%zu path='%s'\n",
              g_model_cache == NULL ? "empty" : "resident",
              g_model_bytes, g_model_path);
+      llm_pool_info();
     }
 
   pthread_mutex_unlock(&g_model_lock);
@@ -876,6 +888,234 @@ static void *matvec_worker(void *argument)
   return NULL;
 }
 
+struct pool_slot_s
+{
+  struct matvec_worker_s work;
+  sem_t ready;
+  sem_t done;
+  pthread_t thread;
+  int stop;
+};
+
+static struct pool_slot_s g_pool_slots[8];
+static sem_t g_pool_request;
+static sem_t g_pool_reply;
+static int g_pool_pid;
+static int g_pool_count;
+static int g_pool_command;
+static int g_pool_result;
+static unsigned int g_pool_mask;
+static unsigned int g_pool_requested_mask;
+static uint64_t g_pool_created;
+static uint64_t g_pool_jobs;
+
+static void pool_wait(sem_t *semaphore)
+{
+  while (sem_wait(semaphore) < 0 && errno == EINTR)
+    {
+    }
+}
+
+static void *pool_worker(void *argument)
+{
+  struct pool_slot_s *slot = argument;
+  for (;;)
+    {
+      pool_wait(&slot->ready);
+      if (slot->stop)
+        {
+          return NULL;
+        }
+
+      matvec_worker(&slot->work);
+      sem_post(&slot->done);
+    }
+}
+
+/* All pthread create/join operations belong to this long-lived kernel task's
+ * group. Built-in command tasks never attempt cross-group pthread_join.
+ * Control storage/semaphores are static: the service remains asleep after
+ * unload, while its compute pthreads are stopped and joined before RAM free.
+ */
+
+static int llm_pool_service(int argc, char **argv)
+{
+  int index;
+  int cpu;
+  (void)argc;
+  (void)argv;
+  for (;;)
+    {
+      pool_wait(&g_pool_request);
+      g_pool_result = 0;
+      if (g_pool_command == 1)
+        {
+          pthread_attr_t attributes;
+          cpu_set_t affinity = g_pool_requested_mask == 0 ?
+                               0xff : g_pool_requested_mask;
+          for (index = 0; index < g_pool_count; index++)
+            {
+              g_pool_slots[index].stop = 1;
+              sem_post(&g_pool_slots[index].ready);
+            }
+
+          for (index = 0; index < g_pool_count; index++)
+            {
+              if (pthread_join(g_pool_slots[index].thread, NULL) != 0)
+                {
+                  g_pool_result = -EIO;
+                }
+            }
+
+          if (g_pool_result < 0)
+            {
+              sem_post(&g_pool_reply);
+              continue;
+            }
+
+          g_pool_count = 0;
+          g_pool_mask = 0;
+          if (sched_setaffinity(0, sizeof(affinity), &affinity) < 0)
+            {
+              g_pool_result = -EIO;
+              sem_post(&g_pool_reply);
+              continue;
+            }
+
+          pthread_attr_init(&attributes);
+          pthread_attr_setstacksize(&attributes, 16384);
+          for (cpu = 0; cpu < 8; cpu++)
+            {
+              struct pool_slot_s *slot;
+              if (!(g_pool_requested_mask & (1u << cpu)))
+                {
+                  continue;
+                }
+
+              slot = &g_pool_slots[g_pool_count];
+              slot->work.cpu = cpu;
+              slot->stop = 0;
+              if (pthread_create(&slot->thread, &attributes,
+                                 pool_worker, slot) != 0)
+                {
+                  g_pool_result = -EAGAIN;
+                  break;
+                }
+
+              g_pool_count++;
+              g_pool_created++;
+            }
+
+          pthread_attr_destroy(&attributes);
+          if (g_pool_result == 0)
+            {
+              g_pool_mask = g_pool_requested_mask;
+            }
+        }
+      else
+        {
+          for (index = 0; index < g_pool_count; index++)
+            {
+              sem_post(&g_pool_slots[index].ready);
+            }
+
+          for (index = 0; index < g_pool_count; index++)
+            {
+              pool_wait(&g_pool_slots[index].done);
+              if (g_pool_slots[index].work.status != 0)
+                {
+                  g_pool_result = g_pool_slots[index].work.status;
+                }
+
+              g_pool_slots[index].work.weights = NULL;
+              g_pool_slots[index].work.input = NULL;
+              g_pool_slots[index].work.output = NULL;
+            }
+
+          g_pool_jobs++;
+        }
+
+      sem_post(&g_pool_reply);
+    }
+}
+
+static int llm_pool_configure(unsigned int mask)
+{
+  int index;
+  int initialized = 0;
+  if (g_pool_pid == 0)
+    {
+      if (mask == 0)
+        {
+          return 0;
+        }
+
+      if (sem_init(&g_pool_request, 0, 0) < 0)
+        {
+          return -ENOMEM;
+        }
+
+      if (sem_init(&g_pool_reply, 0, 0) < 0)
+        {
+          sem_destroy(&g_pool_request);
+          return -ENOMEM;
+        }
+      for (index = 0; index < 8; index++)
+        {
+          if (sem_init(&g_pool_slots[index].ready, 0, 0) < 0)
+            {
+              goto initialize_failed;
+            }
+
+          if (sem_init(&g_pool_slots[index].done, 0, 0) < 0)
+            {
+              sem_destroy(&g_pool_slots[index].ready);
+              goto initialize_failed;
+            }
+
+          initialized++;
+        }
+
+      g_pool_pid = kthread_create("a733-llm-pool", 100, 8192,
+                                 llm_pool_service, NULL);
+      if (g_pool_pid < 0)
+        {
+          g_pool_pid = 0;
+          goto initialize_failed;
+        }
+    }
+
+  if (g_pool_mask == mask && (mask == 0 ? g_pool_count == 0 :
+                             g_pool_count != 0))
+    {
+      return 0;
+    }
+
+  g_pool_requested_mask = mask;
+  g_pool_command = 1;
+  sem_post(&g_pool_request);
+  pool_wait(&g_pool_reply);
+  return g_pool_result;
+
+initialize_failed:
+  sem_destroy(&g_pool_request);
+  sem_destroy(&g_pool_reply);
+  for (index = 0; index < initialized; index++)
+    {
+      sem_destroy(&g_pool_slots[index].ready);
+      sem_destroy(&g_pool_slots[index].done);
+    }
+
+  return -EAGAIN;
+}
+
+static void llm_pool_info(void)
+{
+  printf("llm-pool: pid=%d mask=%02x workers=%d created=%" PRIu64
+         " matrices=%" PRIu64 "\n", g_pool_pid, g_pool_mask,
+         g_pool_count, g_pool_created, g_pool_jobs);
+}
+
 /* Only the RAM-backed fast path uses this function. FILE access stays in the
  * caller; workers share immutable packed rows and write disjoint outputs.
  * No global compute state is used, so simultaneous callers cannot mix masks.
@@ -887,9 +1127,6 @@ static int read_parallel_matvec(FILE *stream, uint64_t absolute_offset,
                                unsigned int cpu_mask,
                                const uint8_t *model_base, size_t model_bytes)
 {
-  struct matvec_worker_s workers[8];
-  pthread_t threads[8];
-  pthread_attr_t attributes;
   uint64_t dimensions[1];
   uint64_t row_bytes;
   uint64_t rows;
@@ -898,7 +1135,6 @@ static int read_parallel_matvec(FILE *stream, uint64_t absolute_offset,
   block_q8_K *input_q8 = NULL;
   unsigned int total_weight = 0;
   unsigned int cumulative = 0;
-  int created = 0;
   int result = 0;
   int old_cancel;
   int cpu;
@@ -960,6 +1196,11 @@ static int read_parallel_matvec(FILE *stream, uint64_t absolute_offset,
     }
 
   quantize_row_q8_K(input, input_q8, (int64_t)dimensions[0]);
+  result = llm_pool_configure(cpu_mask);
+  if (result < 0)
+    {
+      goto out;
+    }
   for (cpu = 0; cpu < 8; cpu++)
     {
       if (cpu_mask & (1u << cpu))
@@ -969,17 +1210,10 @@ static int read_parallel_matvec(FILE *stream, uint64_t absolute_offset,
     }
 
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancel);
-  pthread_attr_init(&attributes);
-  pthread_attr_setstacksize(&attributes, 16384);
-  for (cpu = 0; cpu < 8; cpu++)
+  for (index = 0; index < g_pool_count; index++)
     {
-      struct matvec_worker_s *worker;
-      if (!(cpu_mask & (1u << cpu)))
-        {
-          continue;
-        }
-
-      worker = &workers[created];
+      struct matvec_worker_s *worker = &g_pool_slots[index].work;
+      cpu = worker->cpu;
       worker->weights = weights;
       worker->input = input_q8;
       worker->output = output;
@@ -991,25 +1225,12 @@ static int read_parallel_matvec(FILE *stream, uint64_t absolute_offset,
       cumulative += cpu >= 6 ? 3 : 1;
       worker->end = rows * cumulative / total_weight;
       worker->status = -EIO;
-      if (pthread_create(&threads[created], &attributes,
-                         matvec_worker, worker) != 0)
-        {
-          result = -EAGAIN;
-          break;
-        }
-
-      created++;
     }
 
-  pthread_attr_destroy(&attributes);
-  for (index = 0; index < created; index++)
-    {
-      pthread_join(threads[index], NULL);
-      if (workers[index].status != 0)
-        {
-          result = workers[index].status;
-        }
-    }
+  g_pool_command = 2;
+  sem_post(&g_pool_request);
+  pool_wait(&g_pool_reply);
+  result = g_pool_result;
 
   free(input_q8);
   free(copied_weights);
