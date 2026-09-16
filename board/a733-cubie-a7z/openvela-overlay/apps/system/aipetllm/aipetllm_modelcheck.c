@@ -18,7 +18,6 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
-#include <nuttx/kthread.h>
 
 #include "ggml.h"
 #define GGML_COMMON_DECL_C
@@ -71,6 +70,7 @@ static pthread_mutex_t g_model_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint8_t *g_model_cache;
 static size_t g_model_bytes;
 static char g_model_path[1024];
+extern int a733_compute_service_start(int (*entry)(int, char **));
 static int llm_pool_configure(unsigned int mask);
 static void llm_pool_info(void);
 
@@ -1076,8 +1076,7 @@ static int llm_pool_configure(unsigned int mask)
           initialized++;
         }
 
-      g_pool_pid = kthread_create("a733-llm-pool", 100, 8192,
-                                 llm_pool_service, NULL);
+      g_pool_pid = a733_compute_service_start(llm_pool_service);
       if (g_pool_pid < 0)
         {
           g_pool_pid = 0;

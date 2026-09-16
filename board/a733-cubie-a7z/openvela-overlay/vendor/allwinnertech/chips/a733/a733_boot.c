@@ -7,6 +7,7 @@
 #include <nuttx/config.h>
 
 #include <nuttx/kmalloc.h>
+#include <nuttx/kthread.h>
 
 #include <arch/chip/chip.h>
 
@@ -14,6 +15,16 @@
 #include "arm64_mmu.h"
 
 extern void a733_board_initialize(void);
+int a733_compute_service_start(int (*entry)(int, char **));
+
+/* Platform-owned service lifetime: application code does not include private
+ * kernel headers or manipulate scheduler TCBs. The service owns its pthreads.
+ */
+
+int a733_compute_service_start(int (*entry)(int, char **))
+{
+  return kthread_create("a733-llm-pool", 100, 8192, entry, NULL);
+}
 
 #ifdef CONFIG_ARCH_HAVE_MULTICPU
 uint64_t arm64_get_mpid(int cpu)

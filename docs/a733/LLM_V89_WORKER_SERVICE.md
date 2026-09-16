@@ -11,6 +11,11 @@
 官方openvela内核提供的kthread/pthread/semaphore API构建，不改公共
 调度代码，不移植Linux调度器。
 
+应用边界检查不允许apps引用`nuttx/kthread.h`，首轮构建因此被拦截。
+已将启动入口放入vendor平台层`a733_boot.c`的
+`a733_compute_service_start`，应用调用此平台hook；没有关闭边界检查。
+pthread/semaphore调度仍是当前官方内核API，而不是自行实现的新调度器。
+
 同一核心列表下，首次矩阵创建对应工作线程，以后矩阵/命令复用这些
 线程。切换核心列表时服务先停止并join旧工作线程，再建立新线程；
 默认仍CPU2..7、A76:A55=3:1。计算工作线程绑定所选核心，服务协调
