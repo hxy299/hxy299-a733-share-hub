@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "ggml.h"
 #define GGML_COMMON_DECL_C
@@ -1256,6 +1257,10 @@ static int embedding_pipeline_checkpoint(const char *path,
   struct tensor_info_s *ffn_down = NULL;
   struct tensor_info_s *tensors = NULL;
   FILE *stream = NULL;
+  void *model_memory = NULL;
+  struct timespec load_start;
+  struct timespec compute_start;
+  struct timespec finished;
   uint64_t metadata_count;
   uint64_t tensor_count;
   uint64_t data_start;
@@ -1304,6 +1309,64 @@ static int embedding_pipeline_checkpoint(const char *path,
       fprintf(stderr, "aipetllm: embed cannot open %s: %d (%s)\n",
               path, errno, strerror(errno));
       return 1;
+    }
+
+  if (projection_mode == 7)
+    {
+      struct stat model_stat;
+      size_t loaded = 0;
+      size_t length;
+      FILE *memory_stream;
+
+      if (stat(path, &model_stat) < 0 || !S_ISREG(model_stat.st_mode) ||
+          model_stat.st_size < 24 ||
+          (uint64_t)model_stat.st_size > UINT64_C(1610612736))
+        {
+          fputs("forwardfast: model must be a readable file <= 1536 MiB\n",
+                stderr);
+          goto out;
+        }
+
+      length = (size_t)model_stat.st_size;
+      clock_gettime(CLOCK_MONOTONIC, &load_start);
+      model_memory = malloc(length);
+      if (model_memory == NULL)
+        {
+          fputs("forwardfast: model RAM allocation failed\n", stderr);
+          goto out;
+        }
+
+      printf("forwardfast: loading %zu bytes into RAM\n", length);
+      while (loaded < length)
+        {
+          size_t chunk = length - loaded;
+          if (chunk > 262144)
+            {
+              chunk = 262144;
+            }
+
+          if (read_exact(stream, (uint8_t *)model_memory + loaded, chunk) < 0)
+            {
+              fputs("forwardfast: short model read\n", stderr);
+              goto out;
+            }
+
+          loaded += chunk;
+        }
+
+      memory_stream = fmemopen(model_memory, length, "rb");
+      if (memory_stream == NULL)
+        {
+          fputs("forwardfast: memory stream failed\n", stderr);
+          goto out;
+        }
+
+      fclose(stream);
+      stream = memory_stream;
+      clock_gettime(CLOCK_MONOTONIC, &compute_start);
+      printf("forwardfast: load=%.4f sec; model reads now RAM-only\n",
+             (double)(compute_start.tv_sec - load_start.tv_sec) +
+             (double)(compute_start.tv_nsec - load_start.tv_nsec) / 1.0e9);
     }
 
   if (read_exact(stream, &magic, sizeof(magic)) < 0 ||
@@ -1511,7 +1574,7 @@ static int embedding_pipeline_checkpoint(const char *path,
                  ~(uint64_t)(alignment - 1);
   }
 
-  if (projection_mode == 6)
+  if (projection_mode == 6 || projection_mode == 7)
     {
       ret = qwen2_forward1_checkpoint(stream, data_start, tensors,
                                       tensor_count, embedding, token_id,
@@ -2225,6 +2288,20 @@ out:
       fclose(stream);
     }
 
+  if (projection_mode == 7 && model_memory != NULL)
+    {
+      if (ret == 0)
+        {
+          clock_gettime(CLOCK_MONOTONIC, &finished);
+          printf("forwardfast: compute=%.4f sec; single-token checkpoint; "
+                 "persistent cache/generation pending\n",
+                 (double)(finished.tv_sec - compute_start.tv_sec) +
+                 (double)(finished.tv_nsec - compute_start.tv_nsec) / 1.0e9);
+        }
+
+      free(model_memory);
+    }
+
   return ret;
 }
 
@@ -2270,4 +2347,9 @@ int aipetllm_transformer_block2_checkpoint(const char *path,
 int aipetllm_forward1_checkpoint(const char *path, uint32_t token_id)
 {
   return embedding_pipeline_checkpoint(path, token_id, 6, 0, 0);
+}
+
+int aipetllm_forward_ram_checkpoint(const char *path, uint32_t token_id)
+{
+  return embedding_pipeline_checkpoint(path, token_id, 7, 0, 0);
 }

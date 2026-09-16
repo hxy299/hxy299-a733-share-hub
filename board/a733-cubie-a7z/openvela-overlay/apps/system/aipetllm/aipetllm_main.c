@@ -47,6 +47,8 @@ struct gguf_reader_s
 
 extern int aipetllm_cxx_checkpoint(void);
 extern int aipetllm_cpu_checkpoint(void);
+extern int aipetllm_forward_fast_checkpoint(const char *path,
+                                           uint32_t token_id);
 extern int aipetllm_ggml_quant_checkpoint(void);
 extern int aipetllm_model_checkpoint(const char *path);
 extern int aipetllm_embedding_checkpoint(const char *path,
@@ -624,6 +626,7 @@ static void usage(void)
   puts("  aipetllm attnblock2 model.gguf first-token-id second-token-id");
   puts("  aipetllm block2 model.gguf first-token-id second-token-id");
   puts("  aipetllm forward1 model.gguf token-id");
+  puts("  aipetllm forwardfast model.gguf token-id (RAM + one A76)");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
 
@@ -796,7 +799,8 @@ int main(int argc, char **argv)
                                                      (uint32_t)second);
     }
 
-  if (argc == 4 && strcmp(argv[1], "forward1") == 0)
+  if (argc == 4 && (strcmp(argv[1], "forward1") == 0 ||
+                    strcmp(argv[1], "forwardfast") == 0))
     {
       char *end;
       unsigned long token = strtoul(argv[3], &end, 10);
@@ -805,6 +809,11 @@ int main(int argc, char **argv)
         {
           fputs("aipetllm: forward1 token-id must be uint32\n", stderr);
           return 1;
+        }
+
+      if (strcmp(argv[1], "forwardfast") == 0)
+        {
+          return aipetllm_forward_fast_checkpoint(argv[2], (uint32_t)token);
         }
 
       return aipetllm_forward1_checkpoint(argv[2], (uint32_t)token);

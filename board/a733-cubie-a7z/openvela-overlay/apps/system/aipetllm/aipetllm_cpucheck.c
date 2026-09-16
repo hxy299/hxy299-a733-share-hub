@@ -10,6 +10,55 @@
 #include <unistd.h>
 
 int aipetllm_cpu_checkpoint(void);
+int aipetllm_forward_ram_checkpoint(const char *path, uint32_t token_id);
+int aipetllm_forward_fast_checkpoint(const char *path, uint32_t token_id);
+
+int aipetllm_forward_fast_checkpoint(const char *path, uint32_t token_id)
+{
+  cpu_set_t original = 0;
+  cpu_set_t selected = 0;
+  uint64_t midr;
+  int wait;
+  int result = 1;
+
+  if (CONFIG_SMP_NCPUS < 8 ||
+      sched_getaffinity(0, sizeof(original), &original) < 0)
+    {
+      fputs("forwardfast: verified eight-CPU platform required\n", stderr);
+      return 1;
+    }
+
+  CPU_SET(6, &selected);
+  if (sched_setaffinity(0, sizeof(selected), &selected) < 0)
+    {
+      fputs("forwardfast: cannot select CPU6\n", stderr);
+      return 1;
+    }
+
+  for (wait = 0; wait < 100 && sched_getcpu() != 6; wait++)
+    {
+      usleep(1000);
+    }
+
+  __asm__ volatile("mrs %0, midr_el1" : "=r"(midr));
+  if (sched_getcpu() == 6 && ((midr >> 4) & 0xfff) == 0xd0b)
+    {
+      puts("forwardfast: CPU6 Cortex-A76; one compute thread");
+      result = aipetllm_forward_ram_checkpoint(path, token_id);
+    }
+  else
+    {
+      fputs("forwardfast: A76 migration/identity failed\n", stderr);
+    }
+
+  if (sched_setaffinity(0, sizeof(original), &original) < 0)
+    {
+      fputs("forwardfast: affinity restore failed\n", stderr);
+      result = 1;
+    }
+
+  return result;
+}
 
 /* Diagnostic only: move this task, read identity, run the same bounded integer
  * workload on each CPU, then restore its original affinity. No clocks, power
