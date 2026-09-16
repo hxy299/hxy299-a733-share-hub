@@ -53,3 +53,22 @@ free
 尚未在开发板验证该新命令，不宣称数值和速度实测通过。整盘烧写会
 覆盖 TF 卡现有分区和数据，请先备份模型及板端配置。本地基底镜像
 不包含用户后来上传到 TF 卡的 Qwen GGUF；烧写后需重新传入模型。
+
+## v86 实机前向回归通过
+
+用户实测 `forwardfast`：确认 CPU6 Cortex-A76，一个计算线程。
+模型载入 1117320736 字节，load=158.1617 秒，compute=1.1492 秒，
+命令总耗时 159.3263 秒。载入吞吐约 6.74 MiB/s。
+28 层 state CRC 全部与旧 forward1 记录一致；最终
+final-state-crc=17a04f7d、logits-crc=7fdfee67、argmax=6233，
+logit=10.4909735。由此确认本次 RAM/A76 路径的数值回归通过。
+
+旧 473.6016 秒包含 SD 流式读取，新 compute 仅计算阶段，两者不能用来
+宣称纯 CPU 提升倍数。含载入的总耗时改善约 2.97 倍；计算阶段倒数
+约 0.87 次单 token 前向/秒，不等同于持续生成 tok/s。
+当前命令结束仍释放模型，重复命令会再次加载；必须实现持久生命周期
+才能摊销 158 秒开销。多 token KV cache/生成、内存释放实测和长期
+压力测试仍待完成，不将单次回归视为完整聊天系统通过。
+
+恢复标签：`a733-llm-ram-a76-v86-forward-verified`。
+恢复包：`A733-A7Z-ALL-Files/archives/llm-v86/a733-llm-v86-forward-verified.bundle`。
