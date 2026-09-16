@@ -92,11 +92,16 @@ SECTIONS
   } :text
   _szbss = _ebss - _sbss;
 
+  /* Secondary CPUs write their boot stacks before enabling the data cache.
+   * Never share a cache line with BSS or the CPU0-managed heap boundary.
+   * Page alignment also keeps this invariant across application BSS growth.
+   */
+  . = ALIGN(4096);
   .initstack (NOLOAD) :
   {
     _s_initstack = .;
     *(.initstack)
-    . = ALIGN(16);
+    . = ALIGN(4096);
     _e_initstack = .;
     g_idle_topstack = .;
   } :text
@@ -106,6 +111,10 @@ SECTIONS
 
   ASSERT(_image_end <= 0x48000000,
          "A733 image overlaps the BL31 reserved region")
+  ASSERT((g_cpu_idlestackalloc & 4095) == 0,
+         "A733 per-CPU idle stacks must start on a page boundary")
+  ASSERT((g_idle_topstack & 4095) == 0,
+         "A733 idle stack and heap must not share a cache line")
 
   /DISCARD/ :
   {
