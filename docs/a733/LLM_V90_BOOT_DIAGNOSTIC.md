@@ -28,3 +28,14 @@
 ## 未完成
 
 故障类型和具体指令仍需板端寄存器输出确认；持久线程池跨调用、unload 内存释放、异常取消均需后续验证。多 token KV cache、prefill、生成和 NEON 优化继续暂停。
+
+## 构建和镜像校验结果
+
+WSL 构建退出 0，应用 openvela 边界检查通过。构建退出后确认官方 arm64_fatal.c 不再包含新增诊断函数。
+
+- 镜像：2147483648 字节，SHA256 `269e06b1253edb0e4463b367e39eb1ecd6ba403f5d669c99f6d0fa73f46ae214`。
+- 内核：1713600 字节，SHA256 `2e3e77fa152b3ac4d3dacdac93865819bb3ad93f91e1ede4b4d9dbbe205fec84`。
+- 镜像内核回读一致，ext4 只读检查通过，GPT 检查未发现问题；分区 4 尾部非 2048 扇区对齐提示继承自基线镜像。
+- 本次对应 ELF、Image、System.map 和 build/package/verify 日志保存在仓库 `archives/llm-v90/`，未上传远端。
+
+以上是离线构建和镜像完整性校验，不是板端启动验证。
