@@ -35,6 +35,17 @@
 - argmax token：6233；
 - argmax logit：10.4909735。
 
+使用同一 GGUF tokenizer 解码 argmax：
+
+    aipetllm decode /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf 6233
+
+真机返回：
+
+    decoded-bytes=10 text=' beautiful'
+
+因此单 token 输入 `Hello` 已完成 `28 层前向 -> LM Head -> argmax -> tokenizer decode`
+端到端闭环，当前贪心预测续写为 `Hello beautiful`。
+
 真机最终输出：
 
     Qwen2 28-layer single-token forward and LM head checkpoint passed; multi-token KV-cache generation pending.
