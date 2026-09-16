@@ -50,5 +50,26 @@
 
     Qwen2 28-layer single-token forward and LM head checkpoint passed; multi-token KV-cache generation pending.
 
+## 性能基线
+
+使用 NSH time 对同一命令计时：
+
+    time "aipetllm forward1 /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf 9707"
+
+真机耗时：
+
+    473.6016 sec
+
+即单次完整前向约 7 分 53.6 秒，等效吞吐约 0.00211148 token/s。测试期间：
+
+- openvela 配置为 CONFIG_SMP_NCPUS=1；
+- aipetllm 矩阵执行为单线程；
+- 任务运行在启动 CPU0（A733 的 Cortex-A55）；
+- GGUF 权重从 microSD/FAT 按矩阵流式读取；
+- 尚未启用 A76、SMP、多核分块、跨 token 权重缓存和持久 KV cache。
+
+此数值作为单 A55、单线程、SD 流式读取版本的冻结性能基线。后续所有 SMP/A76/NEON/
+缓存优化必须同时保持本文件记录的逐层 CRC、最终 logits CRC 和 argmax 结果。
+
 结论：流式 GGUF 读取、28 层参数化执行、最终 RMSNorm、完整 LM Head 和 argmax 已在
 A733/openvela 真机通过。上述逐层 CRC 作为后续多 token 执行器的单 token 回归黄金基线。
