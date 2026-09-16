@@ -23,6 +23,17 @@ image-sha256: 8716d5c4e4cc83685b163fbbb45aa3820d14eddba1bef1e2ff3deccd9a3c6f2b
 这仅表示构建和镜像验收通过，六核实机验收仍待完成。官方 `arch.h` 已恢复，
 后续 patch 使用 `--no-backup-if-mismatch` 避免额外留下 `.orig` 文件。
 
+## 六核基础实机回归：通过
+
+用户日志确认 CPU0..5 六个 IDLE，NSH 在 CPU1 执行，掩码 `0x3f`。
+sleep 5 为 5.0009 秒；1 MiB SD 读取无报错；NPU selftest/apitest 均为
+0、guards=0。706E 5 GHz 在一次重试后扫描到，WPA2/DHCP 成功；
+网关 ping 7/7，零丢包，RTT 9..23 ms、平均 13 ms。
+
+由此可以进入八核候选，但不涵盖长期负载、完整 YOLO/LLM 数值测试或
+SSH/FTP 性能。早期串口仍有多核交错输出；无线扫描仍需观察。
+原始日志保存为 `archives/smp-v84/v84-board-regression.txt`。
+
 实机保存完整启动日志，执行：
 
 ```text
