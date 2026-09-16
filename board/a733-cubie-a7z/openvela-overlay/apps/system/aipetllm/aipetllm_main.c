@@ -52,6 +52,8 @@ extern int aipetllm_embedding_checkpoint(const char *path,
                                          uint32_t token_id);
 extern int aipetllm_q_projection_checkpoint(const char *path,
                                             uint32_t token_id);
+extern int aipetllm_qkv_checkpoint(const char *path, uint32_t token_id,
+                                   uint32_t position);
 extern int aipetllm_tokenizer_checkpoint(const char *path);
 extern int aipetllm_decode_checkpoint(const char *path, int id_count,
                                       char *const id_text[]);
@@ -604,6 +606,7 @@ static void usage(void)
   puts("  aipetllm encode model.gguf prompt");
   puts("  aipetllm embed model.gguf token-id");
   puts("  aipetllm qproj model.gguf token-id");
+  puts("  aipetllm qkv model.gguf token-id position");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
 
@@ -691,6 +694,25 @@ int main(int argc, char **argv)
         }
 
       return aipetllm_q_projection_checkpoint(argv[2], (uint32_t)token);
+    }
+
+  if (argc == 5 && strcmp(argv[1], "qkv") == 0)
+    {
+      char *token_end;
+      char *position_end;
+      unsigned long token = strtoul(argv[3], &token_end, 10);
+      unsigned long position = strtoul(argv[4], &position_end, 10);
+
+      if (token_end == argv[3] || *token_end != '\0' ||
+          position_end == argv[4] || *position_end != '\0' ||
+          token > UINT32_MAX || position > UINT32_MAX)
+        {
+          fputs("aipetllm: qkv token-id/position must be uint32\n", stderr);
+          return 1;
+        }
+
+      return aipetllm_qkv_checkpoint(argv[2], (uint32_t)token,
+                                     (uint32_t)position);
     }
 
   if ((argc == 2 || argc == 3) && strcmp(argv[1], "pathcheck") == 0)

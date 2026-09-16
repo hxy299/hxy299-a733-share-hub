@@ -498,13 +498,13 @@ int aipetllm_model_checkpoint(const char *path)
     }
 
   {
-    long position = ftell(stream);
-    if (position < 0)
+    long file_position = ftell(stream);
+    if (file_position < 0)
       {
         goto out;
       }
 
-    data_start = ((uint64_t)position + alignment - 1) &
+    data_start = ((uint64_t)file_position + alignment - 1) &
                  ~(uint64_t)(alignment - 1);
   }
 
@@ -778,13 +778,93 @@ out:
   return result;
 }
 
+static int add_f32_bias(FILE *stream, uint64_t data_start,
+                        const struct tensor_info_s *bias,
+                        float *values, uint64_t count)
+{
+  float *bias_values;
+  uint64_t index;
+  int result;
+
+  if (bias == NULL || bias->dimension_count != 1 ||
+      bias->dimensions[0] != count || bias->type != GGML_TYPE_F32 ||
+      data_start > UINT64_MAX - bias->offset)
+    {
+      return -EINVAL;
+    }
+
+  bias_values = malloc((size_t)count * sizeof(float));
+  if (bias_values == NULL)
+    {
+      return -ENOMEM;
+    }
+
+  result = read_dequantized_row(stream, data_start + bias->offset,
+                                bias, 0, bias_values);
+  if (result == 0)
+    {
+      for (index = 0; index < count; index++)
+        {
+          values[index] += bias_values[index];
+        }
+    }
+
+  free(bias_values);
+  return result;
+}
+
+static int apply_normal_rope(float *values, uint64_t heads,
+                             uint64_t head_dimension,
+                             uint32_t rotary_dimension,
+                             uint32_t position, float frequency_base)
+{
+  uint64_t head;
+  uint32_t pair;
+
+  if (heads == 0 || head_dimension == 0 ||
+      heads > UINT64_MAX / head_dimension ||
+      rotary_dimension == 0 || (rotary_dimension & 1) != 0 ||
+      rotary_dimension > head_dimension || !isfinite(frequency_base) ||
+      frequency_base <= 1.0f)
+    {
+      return -EINVAL;
+    }
+
+  for (head = 0; head < heads; head++)
+    {
+      float *head_values = values + head * head_dimension;
+
+      for (pair = 0; pair < rotary_dimension / 2; pair++)
+        {
+          uint32_t component = pair * 2;
+          float exponent = -(float)component / rotary_dimension;
+          float angle = (float)position * powf(frequency_base, exponent);
+          float cosine = cosf(angle);
+          float sine = sinf(angle);
+          float first = head_values[component];
+          float second = head_values[component + 1];
+
+          head_values[component] = first * cosine - second * sine;
+          head_values[component + 1] = first * sine + second * cosine;
+        }
+    }
+
+  return 0;
+}
+
 static int embedding_pipeline_checkpoint(const char *path,
                                          uint32_t token_id,
-                                         int project_q)
+                                         int projection_mode,
+                                         uint32_t position)
 {
   struct tensor_info_s *embedding = NULL;
   struct tensor_info_s *attention_norm = NULL;
   struct tensor_info_s *attention_q = NULL;
+  struct tensor_info_s *attention_k = NULL;
+  struct tensor_info_s *attention_v = NULL;
+  struct tensor_info_s *attention_q_bias = NULL;
+  struct tensor_info_s *attention_k_bias = NULL;
+  struct tensor_info_s *attention_v_bias = NULL;
   struct tensor_info_s *tensors = NULL;
   FILE *stream = NULL;
   uint64_t metadata_count;
@@ -793,11 +873,17 @@ static int embedding_pipeline_checkpoint(const char *path,
   uint32_t alignment = 32;
   uint32_t version;
   uint32_t magic;
+  uint32_t head_count = 0;
+  uint32_t head_count_kv = 0;
+  uint32_t rotary_dimension = 0;
   float epsilon = 1.0e-6f;
+  float frequency_base = 1000000.0f;
   float *input = NULL;
   float *weight = NULL;
   float *normalized = NULL;
   float *q_output = NULL;
+  float *k_output = NULL;
+  float *v_output = NULL;
   uint64_t index;
   double square_sum = 0.0;
   double output_sum = 0.0;
@@ -853,6 +939,40 @@ static int embedding_pipeline_checkpoint(const char *path,
                type == GGUF_TYPE_FLOAT32)
         {
           if (read_exact(stream, &epsilon, sizeof(epsilon)) < 0)
+            {
+              goto out;
+            }
+        }
+      else if (strcmp(key, "qwen2.attention.head_count") == 0 &&
+               type == GGUF_TYPE_UINT32)
+        {
+          if (read_exact(stream, &head_count, sizeof(head_count)) < 0)
+            {
+              goto out;
+            }
+        }
+      else if (strcmp(key, "qwen2.attention.head_count_kv") == 0 &&
+               type == GGUF_TYPE_UINT32)
+        {
+          if (read_exact(stream, &head_count_kv, sizeof(head_count_kv)) < 0)
+            {
+              goto out;
+            }
+        }
+      else if (strcmp(key, "qwen2.rope.dimension_count") == 0 &&
+               type == GGUF_TYPE_UINT32)
+        {
+          if (read_exact(stream, &rotary_dimension,
+                         sizeof(rotary_dimension)) < 0)
+            {
+              goto out;
+            }
+        }
+      else if (strcmp(key, "qwen2.rope.freq_base") == 0 &&
+               type == GGUF_TYPE_FLOAT32)
+        {
+          if (read_exact(stream, &frequency_base,
+                         sizeof(frequency_base)) < 0)
             {
               goto out;
             }
@@ -925,16 +1045,36 @@ static int embedding_pipeline_checkpoint(const char *path,
         {
           attention_q = tensor;
         }
+      else if (strcmp(tensor->name, "blk.0.attn_k.weight") == 0)
+        {
+          attention_k = tensor;
+        }
+      else if (strcmp(tensor->name, "blk.0.attn_v.weight") == 0)
+        {
+          attention_v = tensor;
+        }
+      else if (strcmp(tensor->name, "blk.0.attn_q.bias") == 0)
+        {
+          attention_q_bias = tensor;
+        }
+      else if (strcmp(tensor->name, "blk.0.attn_k.bias") == 0)
+        {
+          attention_k_bias = tensor;
+        }
+      else if (strcmp(tensor->name, "blk.0.attn_v.bias") == 0)
+        {
+          attention_v_bias = tensor;
+        }
     }
 
   {
-    long position = ftell(stream);
-    if (position < 0)
+    long directory_end = ftell(stream);
+    if (directory_end < 0)
       {
         goto out;
       }
 
-    data_start = ((uint64_t)position + alignment - 1) &
+    data_start = ((uint64_t)directory_end + alignment - 1) &
                  ~(uint64_t)(alignment - 1);
   }
 
@@ -952,7 +1092,7 @@ static int embedding_pipeline_checkpoint(const char *path,
       goto out;
     }
 
-  if (project_q &&
+  if (projection_mode >= 1 &&
       (attention_q == NULL || attention_q->dimension_count != 2 ||
        attention_q->dimensions[0] != embedding->dimensions[0] ||
        attention_q->dimensions[1] == 0 ||
@@ -964,6 +1104,39 @@ static int embedding_pipeline_checkpoint(const char *path,
     {
       fputs("aipetllm: qproj incompatible blk.0.attn_q.weight\n", stderr);
       goto out;
+    }
+
+  if (projection_mode >= 2 &&
+      (attention_k == NULL || attention_v == NULL ||
+       attention_k->dimension_count != 2 ||
+       attention_v->dimension_count != 2 ||
+       attention_k->dimensions[0] != embedding->dimensions[0] ||
+       attention_v->dimensions[0] != embedding->dimensions[0] ||
+       attention_k->dimensions[1] == 0 ||
+       attention_k->dimensions[1] != attention_v->dimensions[1] ||
+       attention_k->dimensions[1] > 65536 ||
+       (attention_k->type != GGML_TYPE_F32 &&
+        attention_k->type != GGML_TYPE_Q4_K &&
+        attention_k->type != GGML_TYPE_Q6_K) ||
+       (attention_v->type != GGML_TYPE_F32 &&
+        attention_v->type != GGML_TYPE_Q4_K &&
+        attention_v->type != GGML_TYPE_Q6_K) ||
+       data_start > UINT64_MAX - attention_k->offset ||
+       data_start > UINT64_MAX - attention_v->offset ||
+       head_count == 0 || head_count_kv == 0 ||
+       attention_q->dimensions[1] % head_count != 0 ||
+       attention_k->dimensions[1] % head_count_kv != 0 ||
+       attention_q->dimensions[1] / head_count !=
+       attention_k->dimensions[1] / head_count_kv))
+    {
+      fputs("aipetllm: qkv incompatible K/V/GQA metadata\n", stderr);
+      goto out;
+    }
+
+  if (projection_mode >= 2 && rotary_dimension == 0)
+    {
+      rotary_dimension = (uint32_t)(attention_q->dimensions[1] /
+                                    head_count);
     }
 
   input = malloc((size_t)embedding->dimensions[0] * sizeof(float));
@@ -1036,7 +1209,7 @@ static int embedding_pipeline_checkpoint(const char *path,
 
   putchar('\n');
 
-  if (!project_q)
+  if (projection_mode == 0)
     {
       puts("Qwen2 token embedding and layer-0 RMSNorm checkpoint passed; "
            "Q projection pending.");
@@ -1094,10 +1267,80 @@ static int embedding_pipeline_checkpoint(const char *path,
     }
 
   putchar('\n');
-  puts("Qwen2 layer-0 Q projection checkpoint passed; K/V and RoPE pending.");
+
+  if (projection_mode == 1)
+    {
+      puts("Qwen2 layer-0 Q projection checkpoint passed; "
+           "K/V and RoPE pending.");
+      ret = 0;
+      goto out;
+    }
+
+  k_output = malloc((size_t)attention_k->dimensions[1] * sizeof(float));
+  v_output = malloc((size_t)attention_v->dimensions[1] * sizeof(float));
+  if (k_output == NULL || v_output == NULL)
+    {
+      fputs("aipetllm: qkv K/V allocation failed\n", stderr);
+      goto out;
+    }
+
+  if (read_quantized_matvec(stream, data_start + attention_k->offset,
+                            attention_k, normalized, k_output) < 0 ||
+      read_quantized_matvec(stream, data_start + attention_v->offset,
+                            attention_v, normalized, v_output) < 0 ||
+      add_f32_bias(stream, data_start, attention_q_bias, q_output,
+                   attention_q->dimensions[1]) < 0 ||
+      add_f32_bias(stream, data_start, attention_k_bias, k_output,
+                   attention_k->dimensions[1]) < 0 ||
+      add_f32_bias(stream, data_start, attention_v_bias, v_output,
+                   attention_v->dimensions[1]) < 0)
+    {
+      fputs("aipetllm: qkv projection/bias execution failed\n", stderr);
+      goto out;
+    }
+
+  printf("qkv heads=%" PRIu32 "/%" PRIu32 " head-dim=%" PRIu64
+         " position=%" PRIu32 " rope-dim=%" PRIu32 " base=%.9g\n",
+         head_count, head_count_kv,
+         attention_q->dimensions[1] / head_count, position,
+         rotary_dimension, (double)frequency_base);
+  printf("biased-crc q=%08" PRIx32 " k=%08" PRIx32 " v=%08" PRIx32
+         " dimensions=%" PRIu64 "/%" PRIu64 "/%" PRIu64 "\n",
+         tensor_crc32(0, (const uint8_t *)q_output,
+                      (size_t)attention_q->dimensions[1] * sizeof(float)),
+         tensor_crc32(0, (const uint8_t *)k_output,
+                      (size_t)attention_k->dimensions[1] * sizeof(float)),
+         tensor_crc32(0, (const uint8_t *)v_output,
+                      (size_t)attention_v->dimensions[1] * sizeof(float)),
+         attention_q->dimensions[1], attention_k->dimensions[1],
+         attention_v->dimensions[1]);
+
+  if (apply_normal_rope(q_output, head_count,
+                        attention_q->dimensions[1] / head_count,
+                        rotary_dimension, position, frequency_base) < 0 ||
+      apply_normal_rope(k_output, head_count_kv,
+                        attention_k->dimensions[1] / head_count_kv,
+                        rotary_dimension, position, frequency_base) < 0)
+    {
+      fputs("aipetllm: qkv RoPE configuration/execution failed\n", stderr);
+      goto out;
+    }
+
+  printf("rope-crc q=%08" PRIx32 " k=%08" PRIx32
+         " v-unchanged=%08" PRIx32 "\n",
+         tensor_crc32(0, (const uint8_t *)q_output,
+                      (size_t)attention_q->dimensions[1] * sizeof(float)),
+         tensor_crc32(0, (const uint8_t *)k_output,
+                      (size_t)attention_k->dimensions[1] * sizeof(float)),
+         tensor_crc32(0, (const uint8_t *)v_output,
+                      (size_t)attention_v->dimensions[1] * sizeof(float)));
+  puts("Qwen2 layer-0 biased Q/K/V and RoPE checkpoint passed; "
+       "attention scores and KV cache pending.");
   ret = 0;
 
 out:
+  free(v_output);
+  free(k_output);
   free(q_output);
   free(normalized);
   free(weight);
@@ -1113,10 +1356,16 @@ out:
 
 int aipetllm_embedding_checkpoint(const char *path, uint32_t token_id)
 {
-  return embedding_pipeline_checkpoint(path, token_id, 0);
+  return embedding_pipeline_checkpoint(path, token_id, 0, 0);
 }
 
 int aipetllm_q_projection_checkpoint(const char *path, uint32_t token_id)
 {
-  return embedding_pipeline_checkpoint(path, token_id, 1);
+  return embedding_pipeline_checkpoint(path, token_id, 1, 0);
+}
+
+int aipetllm_qkv_checkpoint(const char *path, uint32_t token_id,
+                            uint32_t position)
+{
+  return embedding_pipeline_checkpoint(path, token_id, 2, position);
 }
