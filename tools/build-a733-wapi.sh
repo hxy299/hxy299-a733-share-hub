@@ -27,6 +27,8 @@ files=(
 patched_files=(
   nuttx/arch/arm64/include/arch.h
 )
+staged_files=()
+aipet_saved=false
 aipet_relative=apps/system/aipetllm
 aipet_official="$official/$aipet_relative"
 aipet_overlay="$overlay/$aipet_relative"
@@ -39,7 +41,7 @@ esac
 restore_official()
 {
   local path
-  for path in "${files[@]}"; do
+  for path in "${staged_files[@]}"; do
     if [[ -f "$backup/$path" ]]; then
       cp -f "$backup/$path" "$official/$path"
     else
@@ -48,12 +50,16 @@ restore_official()
   done
 
   for path in "${patched_files[@]}"; do
-    cp -f "$backup/$path" "$official/$path"
+    if [[ -f "$backup/$path" ]]; then
+      cp -f "$backup/$path" "$official/$path"
+    fi
   done
 
-  rm -rf "$aipet_official"
-  if [[ -d "$backup/$aipet_relative" ]]; then
-    cp -a "$backup/$aipet_relative" "$aipet_official"
+  if [[ "$aipet_saved" == true ]]; then
+    rm -rf "$aipet_official"
+    if [[ -d "$backup/$aipet_relative" ]]; then
+      cp -a "$backup/$aipet_relative" "$aipet_official"
+    fi
   fi
 
   rm -rf "$backup"
@@ -66,6 +72,7 @@ for path in "${files[@]}"; do
     cp "$official/$path" "$backup/$path"
   fi
 
+  staged_files+=("$path")
   mkdir -p "$official/$(dirname "$path")"
   cp -f "$overlay/$path" "$official/$path"
 done
@@ -83,6 +90,7 @@ if [[ -d "$aipet_official" ]]; then
   mkdir -p "$backup/$(dirname "$aipet_relative")"
   cp -a "$aipet_official" "$backup/$aipet_relative"
 fi
+aipet_saved=true
 
 rm -rf "$aipet_official"
 cp -a "$aipet_overlay" "$aipet_official"
