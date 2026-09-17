@@ -31,4 +31,12 @@ tap 注销不等待已开始的回调，适配器采用进程生命周期静态�
 
 ## 当前验证范围
 
+新增 NSH 命令 `aipet ask "你好"` 与 `aipet cancel`；使用官方后台 `ai_agent &`，不再启动官方会抢读 NSH 串口的 CLI 线程。启动时 attach，退出清理前 detach。当前呈现仅终端文本和解析后的表情/动作数量，不执行动作、不假装已发声。
+
+凭证只放板端 `/data/ai_agent/config/config.json`；参考 `assets/aipet-online/config.example.json`，必须替换占位符，不能提交实际 key，也不要把 key 放命令行或日志。配置应在 Agent 启动前上传。官方配置存储复用该文件。CA bundle 放 `/data/ai_agent/ca.pem`，使用可信操作系统维护的公开根证书；缺失或无效则 TLS 明确失败。确认 `wifi time` 的系统时间可信后再使用 HTTPS。
+
+这次板级集成补丁仅允许官方时间和天气工具，禁止文件读写、shell、音乐、QuickApp 等无关工具。TLS 改为 VERIFY_REQUIRED 与主机名校验；目前在线 ASR 的独立 WebSocket TLS 还需单独审计，不能将此修复扩大宣称为所有网络服务已安全。
+
+主机验证命令：`bash tools/test-aipet-agent.sh`。构建结束自动恢复官方文件；WSL 强制断电等异常终止仍可能跳过 EXIT，必须检查临时 staging 后再开始下一次构建。
+
 `tools/test-aipet-agent.c` 使用真实官方 tap 实现和替代 inbound 入队函数，覆盖所有权、并发拒绝、短缓冲重取、迟到回复隔离、取消、入队失败、超时与注销。不代表已完成云端推理或板端稳定性测试。所有产品改动留在代码仓库，没有改写官方环境。

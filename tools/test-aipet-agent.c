@@ -37,6 +37,7 @@ int main(void)
   assert(mbus_tap_try_deliver(&old));
   assert(aipet_agent_poll(text, sizeof(text), NULL) == -EAGAIN);
   aipet_agent_cancel();
+  assert(aipet_agent_poll(text, sizeof(text), NULL) == -ECANCELED);
   reject = 1;
   assert(aipet_agent_submit("rejected", 1000) == -EAGAIN);
   reject = 0;
