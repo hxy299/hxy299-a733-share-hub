@@ -89,7 +89,7 @@ int aipetllm_sequence_fast_checkpoint(const char *path,
                                       unsigned int cpu_mask)
 {
   if (sequence == NULL || sequence->input_count == 0 ||
-      sequence->input_count > AIPETLLM_SEQUENCE_LIMIT)
+      sequence->input_count > AIPETLLM_INPUT_LIMIT)
     {
       return 1;
     }

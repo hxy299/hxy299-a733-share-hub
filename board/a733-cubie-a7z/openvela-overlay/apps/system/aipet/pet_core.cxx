@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "pet_core.hxx"
+#include "pet_debug.hxx"
 #include <regex>
 #include <stdexcept>
 
@@ -184,6 +185,7 @@ Turn Conversation::run(const std::string &user)
   Turn turn;
   if (state_ != State::idle) return turn;
   state_ = State::routing;
+  trace_phase("routing", 0);
   try
     {
       if (user.size() > 4096 || user.find('\0') != std::string::npos)
@@ -213,6 +215,7 @@ Turn Conversation::run(const std::string &user)
           if (turn.route == Route::cloud && !ports_.online())
             turn.route = Route::local;
           state_ = State::generating;
+          trace_phase(turn.route == Route::cloud ? "cloud" : "local", 0);
           bool ok;
           if (turn.route == Route::cloud)
             {
@@ -220,6 +223,7 @@ Turn Conversation::run(const std::string &user)
               if (!ok)
                 {
                   turn.cloud_fallback = true;
+                  trace_phase("cloud-fallback", 1);
                   turn.route = Route::local;
                   raw.clear();
                   ok = ports_.local_reply(user, raw);
@@ -230,6 +234,7 @@ Turn Conversation::run(const std::string &user)
         }
       if (!parse_reply(raw, turn.reply)) throw std::runtime_error("reply rejected");
       state_ = State::presenting;
+      trace_phase("presenting", 0);
       turn.ok = ports_.present(turn.reply);
       if (turn.ok) completed_++;
       ports_.return_idle();

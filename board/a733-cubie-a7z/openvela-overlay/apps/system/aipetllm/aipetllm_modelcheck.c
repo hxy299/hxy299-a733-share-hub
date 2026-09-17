@@ -1524,7 +1524,7 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
 
   if (sequence != NULL)
     {
-      if (sequence->input_count == 0 || sequence->input_count > 64 ||
+      if (sequence->input_count == 0 || sequence->input_count > AIPETLLM_INPUT_LIMIT ||
           sequence->generate_limit > 64)
         {
           return 1;
@@ -3266,7 +3266,7 @@ int aipetllm_sequence_ram_checkpoint(const char *path,
                                     unsigned int mask)
 {
   if (sequence == NULL || sequence->input_count == 0 ||
-      sequence->input_count > 64 || sequence->generate_limit > 64)
+      sequence->input_count > AIPETLLM_INPUT_LIMIT || sequence->generate_limit > 64)
     {
       return 1;
     }

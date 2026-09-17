@@ -20,6 +20,7 @@ if(CONFIG_SYSTEM_AIPETLLM)
     aipetllm_cpucheck.c
     aipetllm_cxx.cxx
     aipetllm_bpe.cxx
+    aipetllm_api.cxx
     aipetllm_ggml_quant.c
     aipetllm_modelcheck.c
     aipetllm_tokencheck.c

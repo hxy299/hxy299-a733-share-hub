@@ -751,14 +751,17 @@ static int encode_tokens(const char *path, const char *prompt,
  * never passed through ordinary byte-level BPE. User text remains ordinary
  * text; control-token spellings are rejected instead of being interpreted.
  */
-extern "C" int aipetllm_chat_tokens(const char *path, const char *prompt,
+extern "C" int aipetllm_chat_system_tokens(const char *path, const char *system,
+                                    const char *prompt,
                                     std::uint32_t *output,
                                     std::uint32_t capacity,
                                     std::uint32_t *count,
                                     std::uint32_t *stop_token)
 {
   vocabulary vocab;
-  if (prompt == nullptr || prompt[0] == '\0' ||
+  if (system == nullptr || system[0] == '\0' ||
+      std::strlen(system) > 4096 || std::strstr(system, "<|") != nullptr ||
+      prompt == nullptr || prompt[0] == '\0' ||
       std::strlen(prompt) > 4096 || std::strstr(prompt, "<|") != nullptr ||
       output == nullptr || count == nullptr || stop_token == nullptr ||
       capacity == 0 || !vocab.load(path))
@@ -793,7 +796,7 @@ extern "C" int aipetllm_chat_tokens(const char *path, const char *prompt,
     };
 
   if (!special(start->second) ||
-      !ordinary("system\nYou are a helpful assistant.") ||
+      !ordinary((std::string("system\n") + system).c_str()) ||
       !special(end->second) || !ordinary("\n") ||
       !special(start->second) || !ordinary("user\n") ||
       !ordinary(prompt) || !special(end->second) || !ordinary("\n") ||
@@ -825,11 +828,21 @@ extern "C" int aipetllm_encode_tokens(const char *path, const char *prompt,
   return encode_tokens(path, prompt, output, capacity, count);
 }
 
+extern "C" int aipetllm_chat_tokens(const char *path, const char *prompt,
+                                    std::uint32_t *output, std::uint32_t capacity,
+                                    std::uint32_t *count, std::uint32_t *stop)
+{
+  return aipetllm_chat_system_tokens(path, "You are a helpful assistant.",
+                                    prompt, output, capacity, count, stop);
+}
+
 struct token_stream
 {
   std::vector<std::string> pieces;
   std::string pending;
   int inverse[512];
+  int (*sink)(void *, const char *, std::size_t) = nullptr;
+  void *sink_context = nullptr;
 };
 
 extern "C" void *aipetllm_stream_open(const char *path)
@@ -872,9 +885,17 @@ extern "C" int aipetllm_stream_emit(void *context, std::uint32_t token)
     }
   if (complete != 0)
     {
-      if (std::fwrite(stream->pending.data(), 1, complete, stdout) != complete)
-        return 1;
-      std::fflush(stdout);
+      if (stream->sink != nullptr)
+        {
+          if (stream->sink(stream->sink_context, stream->pending.data(), complete))
+            return 1;
+        }
+      else
+        {
+          if (std::fwrite(stream->pending.data(), 1, complete, stdout) != complete)
+            return 1;
+          std::fflush(stdout);
+        }
       stream->pending.erase(0, complete);
     }
   if (stream->pending.size() > 4) return 1;
@@ -884,12 +905,27 @@ extern "C" int aipetllm_stream_emit(void *context, std::uint32_t token)
 extern "C" void aipetllm_stream_close(void *context)
 {
   auto *stream = static_cast<token_stream *>(context);
-  if (stream != nullptr && !stream->pending.empty())
+  if (stream != nullptr && stream->sink == nullptr && !stream->pending.empty())
     {
       std::fputs("\xef\xbf\xbd", stdout);
       std::fputs("\naipetllm: incomplete UTF-8 tail replaced\n", stderr);
     }
   delete stream;
+}
+
+extern "C" void *aipetllm_stream_sink_open(const char *path,
+    int (*sink)(void *, const char *, std::size_t), void *context)
+{
+  if (sink == nullptr) return nullptr;
+  auto *stream = static_cast<token_stream *>(aipetllm_stream_open(path));
+  if (stream != nullptr) { stream->sink = sink; stream->sink_context = context; }
+  return stream;
+}
+
+extern "C" int aipetllm_stream_sink_finish(void *context)
+{
+  auto *stream = static_cast<token_stream *>(context);
+  return stream != nullptr && stream->pending.empty() ? 0 : 1;
 }
 
 #ifdef AIPETLLM_BPE_TEST_API
