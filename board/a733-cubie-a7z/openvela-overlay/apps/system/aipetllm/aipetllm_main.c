@@ -77,6 +77,8 @@ extern int aipetllm_decode_checkpoint(const char *path, int id_count,
 extern int aipetllm_bpe_checkpoint(const char *path, const char *prompt);
 extern int aipetllm_encode_tokens(const char *, const char *, uint32_t *,
                                   uint32_t, uint32_t *);
+extern int aipetllm_chat_tokens(const char *, const char *, uint32_t *,
+                                uint32_t, uint32_t *, uint32_t *);
 
 static const char *file_type(mode_t mode)
 {
@@ -145,7 +147,14 @@ static int generate_ids(int argc, char *argv[])
       return 1;
     }
 
-  if (strcmp(argv[1], "generate") == 0)
+  if (strcmp(argv[1], "chat") == 0)
+    {
+      sequence.chat_mode = 1;
+      result = aipetllm_chat_tokens(argv[2], argv[3], sequence.input,
+                                    AIPETLLM_SEQUENCE_LIMIT,
+                                    &sequence.input_count, &sequence.chat_stop);
+    }
+  else if (strcmp(argv[1], "generate") == 0)
     {
       result = aipetllm_encode_tokens(argv[2], argv[3], sequence.input,
                                       AIPETLLM_SEQUENCE_LIMIT,
@@ -743,6 +752,7 @@ static void usage(void)
   puts("  aipetllm forward2fast model.gguf token1 token2 [cores]");
   puts("  aipetllm generateids model.gguf token1,token2 count[0..64] [cores]");
   puts("  aipetllm generate model.gguf \"raw text\" count[0..64] [cores]");
+  puts("  aipetllm chat model.gguf \"message\" count[0..64] [cores]");
   puts("  aipetllm cacheinfo | unload (persistent RAM model)");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
@@ -924,7 +934,7 @@ int main(int argc, char **argv)
 
   if ((argc == 5 || argc == 6) &&
       (strcmp(argv[1], "generateids") == 0 ||
-       strcmp(argv[1], "generate") == 0))
+       strcmp(argv[1], "generate") == 0 || strcmp(argv[1], "chat") == 0))
     {
       return generate_ids(argc, argv);
     }

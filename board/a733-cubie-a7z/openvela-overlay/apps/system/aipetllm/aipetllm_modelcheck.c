@@ -1608,6 +1608,8 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
       char name[GGUF_NAME_MAX];
       uint64_t value_dimensions;
       uint64_t query_per_kv = head_count / head_count_kv;
+      uint32_t attention_changed = 0;
+      float attention_max_error = 0.0f;
       uint32_t head;
 
 #define FIND_LAYER_TENSOR(variable, suffix)                                  \
@@ -1785,8 +1787,41 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
                     }
 
                   context[destination + component] = sum;
+                  if (position == 1)
+                    {
+                      /* Retain the v93 two-key expression as a compatibility
+                       * baseline and measure the generic reduction before
+                       * selecting it. This does not prove model accuracy.
+                       */
+                      float baseline =
+                        probability[0] / total * values[base] +
+                        probability[1] / total * values[base + value_dimensions];
+                      if (memcmp(&sum, &baseline, sizeof(float)) != 0)
+                        {
+                          attention_changed++;
+                          attention_max_error = fmaxf(attention_max_error,
+                                                       fabsf(sum - baseline));
+                        }
+
+                      context[destination + component] = baseline;
+                    }
                 }
             }
+        }
+
+      if (two_tokens && position == 1)
+        {
+          printf("attention-audit layer=%" PRIu32
+                 " generic-vs-two-key changed=%" PRIu32 " maxabs=%.9g"
+                 " q=%08" PRIx32 " k=%08" PRIx32 " v=%08" PRIx32
+                 " context=%08" PRIx32 "; two-key selected\n",
+                 layer, attention_changed, (double)attention_max_error,
+                 tensor_crc32(0, (const uint8_t *)query, hidden * sizeof(float)),
+                 tensor_crc32(0, (const uint8_t *)key,
+                              value_dimensions * sizeof(float)),
+                 tensor_crc32(0, (const uint8_t *)value,
+                              value_dimensions * sizeof(float)),
+                 tensor_crc32(0, (const uint8_t *)context, hidden * sizeof(float)));
         }
 
       if (read_parallel_matvec(stream,
@@ -1850,10 +1885,21 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
           state[index] += down[index];
         }
 
+      if (sequence == NULL || !sequence->chat_mode ||
+          layer == 0 || layer + 1 == block_count)
+        {
       printf("layer[%" PRIu32 "] state-crc=%08" PRIx32 "\n",
              layer,
              tensor_crc32(0, (const uint8_t *)state,
                           (size_t)hidden * sizeof(float)));
+        }
+    }
+
+  if (sequence != NULL && sequence->chat_mode &&
+      position + 1 < sequence->input_count)
+    {
+      /* History KV is complete; only the final prompt position needs logits. */
+      continue;
     }
 
   output_norm = find_tensor(tensors, tensor_count, "output_norm.weight");
@@ -1930,8 +1976,15 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
   }
 
   if (sequence != NULL && sequence->output_count != 0 &&
-      next_token == sequence->eos)
+      (next_token == sequence->eos ||
+       (sequence->chat_mode && next_token == sequence->chat_stop)))
     {
+      /* Do not display control markers as assistant response text. */
+      if (sequence->chat_mode)
+        {
+          sequence->output_count--;
+        }
+      printf("generation-stop token=%" PRIu32 "\n", next_token);
       break;
     }
 

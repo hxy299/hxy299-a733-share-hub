@@ -672,22 +672,17 @@ bool bpe_word(const vocabulary &vocab, const std::string &raw,
 
 }
 
-static int encode_tokens(const char *path, const char *prompt,
+static int encode_with_vocab(vocabulary &vocab,
+                          const char *path, const char *prompt,
                           std::uint32_t *output, std::uint32_t capacity,
                           std::uint32_t *count)
 {
-  vocabulary vocab;
   std::vector<std::uint32_t> tokens;
   std::vector<std::string> spans;
 
   if (prompt == nullptr || prompt[0] == '\0')
     {
       std::fputs("aipetllm: encode prompt must not be empty\n", stderr);
-      return 1;
-    }
-
-  if (!vocab.load(path))
-    {
       return 1;
     }
 
@@ -736,6 +731,82 @@ static int encode_tokens(const char *path, const char *prompt,
   std::putchar('\n');
   std::puts("Qwen2 pre-tokenizer and byte-level BPE checkpoint passed; "
             "full Unicode category audit pending.");
+  return 0;
+}
+
+static int encode_tokens(const char *path, const char *prompt,
+                          std::uint32_t *output, std::uint32_t capacity,
+                          std::uint32_t *count)
+{
+  vocabulary vocab;
+  if (!vocab.load(path))
+    {
+      return 1;
+    }
+
+  return encode_with_vocab(vocab, path, prompt, output, capacity, count);
+}
+
+/* Single-turn ChatML: special tokens are looked up and appended as IDs,
+ * never passed through ordinary byte-level BPE. User text remains ordinary
+ * text; control-token spellings are rejected instead of being interpreted.
+ */
+extern "C" int aipetllm_chat_tokens(const char *path, const char *prompt,
+                                    std::uint32_t *output,
+                                    std::uint32_t capacity,
+                                    std::uint32_t *count,
+                                    std::uint32_t *stop_token)
+{
+  vocabulary vocab;
+  if (prompt == nullptr || prompt[0] == '\0' ||
+      std::strlen(prompt) > 4096 || std::strstr(prompt, "<|") != nullptr ||
+      output == nullptr || count == nullptr || stop_token == nullptr ||
+      capacity == 0 || !vocab.load(path))
+    {
+      return 1;
+    }
+
+  auto start = vocab.token_ids.find("<|im_start|>");
+  auto end = vocab.token_ids.find("<|im_end|>");
+  if (start == vocab.token_ids.end() || end == vocab.token_ids.end())
+    {
+      std::fputs("aipetllm: ChatML special tokens missing\n", stderr);
+      return 1;
+    }
+
+  *count = 0;
+  *stop_token = end->second;
+  auto special = [&](std::uint32_t id) -> bool
+    {
+      if (*count >= capacity) return false;
+      output[(*count)++] = id;
+      return true;
+    };
+  auto ordinary = [&](const char *text) -> bool
+    {
+      std::uint32_t written = 0;
+      if (*count >= capacity ||
+          encode_with_vocab(vocab, path, text, output + *count,
+                            capacity - *count, &written) != 0) return false;
+      *count += written;
+      return true;
+    };
+
+  if (!special(start->second) ||
+      !ordinary("system\nYou are a helpful assistant.") ||
+      !special(end->second) || !ordinary("\n") ||
+      !special(start->second) || !ordinary("user\n") ||
+      !ordinary(prompt) || !special(end->second) || !ordinary("\n") ||
+      !special(start->second) || !ordinary("assistant\n"))
+    {
+      std::fputs("aipetllm: ChatML prompt exceeds token capacity\n", stderr);
+      *count = 0;
+      return 1;
+    }
+
+  std::printf("chatml tokens=%" PRIu32 " start=%" PRIu32
+              " stop=%" PRIu32 " single-turn=1\n", *count,
+              start->second, end->second);
   return 0;
 }
 

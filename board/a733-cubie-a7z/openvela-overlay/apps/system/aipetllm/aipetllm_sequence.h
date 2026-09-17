@@ -11,6 +11,8 @@ struct aipetllm_sequence_s
   uint32_t output[64];
   uint32_t output_count;
   uint32_t eos;
+  uint32_t chat_stop;
+  uint32_t chat_mode;
 };
 int aipetllm_sequence_ram_checkpoint(const char *path,
                                     struct aipetllm_sequence_s *sequence,
