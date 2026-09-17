@@ -34,6 +34,7 @@ patched_files=(
   packages/ai_agent/src/tools/tool_registry.c
   packages/ai_agent/src/core/agent_loop.c
   packages/ai_agent/src/core/session_mgr.c
+  packages/ai_agent/src/tools/skill_loader.c
 )
 staged_files=()
 aipet_saved=false

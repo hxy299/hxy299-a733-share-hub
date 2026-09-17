@@ -83,6 +83,15 @@
      if (s_tool_count >= MAX_TOOLS) {
 --- a/packages/ai_agent/src/core/agent_loop.c
 +++ b/packages/ai_agent/src/core/agent_loop.c
+@@ -661,5 +661,5 @@
+-    char* reply = calloc(1, 512);
++    char* reply = calloc(1, 1024);
+     if (reply) {
+-        tool_registry_execute("cron_add", input, reply, 512);
+-        snprintf(reply, 512, "好的，%d 秒后提醒你：%s",
++        tool_registry_execute("cron_add", input, reply, 1024);
++        snprintf(reply, 1024, "好的，%d 秒后提醒你：%s",
+             secs, remind_msg);
 @@ -866,1 +866,3 @@
 -        out.content = strdup("Sorry, I encountered an error.");
 +        out.content = strdup(strcmp(msg->channel, "pet") == 0
@@ -108,3 +117,22 @@
 @@ -267,1 +267,1 @@
 -            char path[256];
 +            char path[512];
+--- a/packages/ai_agent/src/tools/skill_loader.c
++++ b/packages/ai_agent/src/tools/skill_loader.c
+@@ -350,1 +350,1 @@
+-        char full_path[256];
++        char full_path[512];
+@@ -374,3 +374,9 @@
+-        off += snprintf(buf + off, size - off,
++        int written = snprintf(buf + off, size - off,
+             "- **%s**: %s (read with: read_file %s)\n",
+             title, desc, full_path);
++        if (written < 0) break;
++        if ((size_t)written >= size - off) {
++            off = size - 1;
++            break;
++        }
++        off += (size_t)written;
+@@ -416,1 +421,1 @@
+-        char path[256];
++        char path[512];
