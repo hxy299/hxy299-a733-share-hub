@@ -27,6 +27,34 @@
 #include "quants.h"
 
 #define GGUF_MAGIC UINT32_C(0x46554747)
+
+static int g_generation_active;
+static int g_generation_stop;
+
+int aipetllm_generation_control(int stop)
+{
+  int active = __atomic_load_n(&g_generation_active, __ATOMIC_ACQUIRE);
+  if (stop && active)
+    {
+      __atomic_store_n(&g_generation_stop, 1, __ATOMIC_RELEASE);
+    }
+
+  printf("llm-generation: active=%d stop-request=%d\n", active,
+         __atomic_load_n(&g_generation_stop, __ATOMIC_ACQUIRE));
+  return 0;
+}
+
+static int generation_stopped(void)
+{
+  return __atomic_load_n(&g_generation_stop, __ATOMIC_ACQUIRE);
+}
+
+static double elapsed_seconds(const struct timespec *first,
+                              const struct timespec *last)
+{
+  return (double)(last->tv_sec - first->tv_sec) +
+         (double)(last->tv_nsec - first->tv_nsec) / 1.0e9;
+}
 #define GGUF_TYPE_UINT8 0
 #define GGUF_TYPE_INT8 1
 #define GGUF_TYPE_UINT16 2
@@ -1487,7 +1515,12 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
   uint32_t capacity = two_tokens ? 2 : 1;
   uint32_t current_token = token_id;
   uint32_t next_token = 0;
+  struct timespec sequence_start;
+  struct timespec first_token_time;
+  int streaming = sequence != NULL && sequence->emit != NULL;
   int result = 1;
+
+  clock_gettime(CLOCK_MONOTONIC, &sequence_start);
 
   if (sequence != NULL)
     {
@@ -1585,7 +1618,7 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
           goto out;
         }
 
-      if (two_tokens)
+      if (two_tokens && (!streaming || position < sequence->input_count))
         {
           printf("forward2 position=%" PRIu32 " token=%" PRIu32 "\n",
                  position, current_token);
@@ -1593,6 +1626,12 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
 
   for (layer = 0; layer < block_count; layer++)
     {
+      if (sequence != NULL && generation_stopped())
+        {
+          result = 125;
+          goto out;
+        }
+
       struct tensor_info_s *attention_norm;
       struct tensor_info_s *attention_v;
       struct tensor_info_s *attention_v_bias;
@@ -1809,7 +1848,7 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
             }
         }
 
-      if (two_tokens && position == 1)
+      if (two_tokens && position == 1 && !streaming)
         {
           printf("attention-audit layer=%" PRIu32
                  " generic-vs-two-key changed=%" PRIu32 " maxabs=%.9g"
@@ -1885,8 +1924,8 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
           state[index] += down[index];
         }
 
-      if (sequence == NULL || !sequence->chat_mode ||
-          layer == 0 || layer + 1 == block_count)
+      if (!streaming && (sequence == NULL || !sequence->chat_mode ||
+          layer == 0 || layer + 1 == block_count))
         {
       printf("layer[%" PRIu32 "] state-crc=%08" PRIx32 "\n",
              layer,
@@ -1950,6 +1989,8 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
           }
       }
 
+    if (!streaming)
+      {
     printf("final-state-crc=%08" PRIx32
            " logits-crc=%08" PRIx32
            " argmax=%" PRIu64 " logit=%.9g vocab=%" PRIu64 "\n",
@@ -1960,6 +2001,7 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
                         sizeof(float)),
            maximum_index, (double)maximum_logit,
            output_weight->dimensions[1]);
+      }
     if (!isfinite(maximum_logit))
       {
         goto out;
@@ -1969,9 +2011,29 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
     if (sequence != NULL && sequence->generate_limit != 0 &&
         position + 1 >= sequence->input_count)
       {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        if (sequence->output_count == 0)
+          {
+            first_token_time = now;
+            sequence->first_token_seconds = elapsed_seconds(&sequence_start,
+                                                             &now);
+            if (streaming) fputs("\nassistant> ", stdout);
+          }
+        sequence->after_first_seconds = elapsed_seconds(&first_token_time,
+                                                        &now);
         sequence->output[sequence->output_count++] = next_token;
+        if (!streaming)
+          {
         printf("generated[%" PRIu32 "]=%" PRIu32 "\n",
                sequence->output_count - 1, next_token);
+          }
+        else if (next_token != sequence->eos &&
+                 (!sequence->chat_mode || next_token != sequence->chat_stop) &&
+                 sequence->emit(sequence->emit_context, next_token) != 0)
+          {
+            goto out;
+          }
       }
   }
 
@@ -1984,7 +2046,7 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
         {
           sequence->output_count--;
         }
-      printf("generation-stop token=%" PRIu32 "\n", next_token);
+      if (!streaming) printf("generation-stop token=%" PRIu32 "\n", next_token);
       break;
     }
 
@@ -1992,6 +2054,7 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
 
   if (sequence != NULL)
     {
+      if (streaming) putchar('\n');
       printf("Qwen2 causal prefill/generation passed; prompt=%" PRIu32
              " generated=%" PRIu32 "; KV session released on return\n",
              sequence->input_count, sequence->output_count);
@@ -2009,6 +2072,10 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
   result = 0;
 
 out:
+  if (result == 125)
+    {
+      puts("\ngeneration stopped cooperatively; no partial history commit");
+    }
   free(probability);
   free(scores);
   free(values);
@@ -2114,6 +2181,11 @@ static int embedding_pipeline_run(const char *path,
 
       cache_locked = 1;
       pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancel);
+      if (sequence != NULL)
+        {
+          __atomic_store_n(&g_generation_stop, 0, __ATOMIC_RELEASE);
+          __atomic_store_n(&g_generation_active, 1, __ATOMIC_RELEASE);
+        }
       if (g_model_cache != NULL)
         {
           if (strcmp(path, g_model_path) != 0)
@@ -2172,6 +2244,11 @@ static int embedding_pipeline_run(const char *path,
       printf("forwardfast: loading %zu bytes into RAM\n", length);
       while (loaded < length)
         {
+          if (sequence != NULL && generation_stopped())
+            {
+              ret = 125;
+              goto out;
+            }
           size_t chunk = length - loaded;
           if (chunk > 262144)
             {
@@ -3165,6 +3242,10 @@ out:
 
   if (cache_locked)
     {
+      if (sequence != NULL)
+        {
+          __atomic_store_n(&g_generation_active, 0, __ATOMIC_RELEASE);
+        }
       pthread_mutex_unlock(&g_model_lock);
       pthread_setcancelstate(old_cancel, NULL);
     }

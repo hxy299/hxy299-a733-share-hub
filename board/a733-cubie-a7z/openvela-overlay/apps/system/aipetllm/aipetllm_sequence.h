@@ -13,7 +13,12 @@ struct aipetllm_sequence_s
   uint32_t eos;
   uint32_t chat_stop;
   uint32_t chat_mode;
+  int (*emit)(void *context, uint32_t token);
+  void *emit_context;
+  double first_token_seconds;
+  double after_first_seconds;
 };
+int aipetllm_generation_control(int stop);
 int aipetllm_sequence_ram_checkpoint(const char *path,
                                     struct aipetllm_sequence_s *sequence,
                                     unsigned int mask);

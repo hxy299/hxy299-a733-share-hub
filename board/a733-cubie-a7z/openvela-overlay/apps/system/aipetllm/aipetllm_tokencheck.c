@@ -729,6 +729,16 @@ int aipetllm_decode_checkpoint(const char *path, int id_count,
                     }
 
                   lengths[wanted] = (size_t)length;
+                  for (item = wanted + 1; item < id_count; item++)
+                    {
+                      if (ids[item] == token)
+                        {
+                          memcpy(pieces + (size_t)item * TOKEN_PIECE_MAX,
+                                 pieces + (size_t)wanted * TOKEN_PIECE_MAX,
+                                 (size_t)length);
+                          lengths[item] = (size_t)length;
+                        }
+                    }
                 }
               else if (skip_exact(stream, length) < 0)
                 {
@@ -774,8 +784,7 @@ int aipetllm_decode_checkpoint(const char *path, int id_count,
   printf("decoded-bytes=%lu text='", (unsigned long)decoded_length);
   fwrite(decoded, 1, decoded_length, stdout);
   puts("'");
-  puts("Qwen2 token-to-piece byte decode checkpoint passed; "
-       "Transformer inference pending.");
+  puts("Qwen2 token-to-piece byte decode checkpoint passed.");
   ret = 0;
 
 out:

@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,6 +80,16 @@ extern int aipetllm_encode_tokens(const char *, const char *, uint32_t *,
                                   uint32_t, uint32_t *);
 extern int aipetllm_chat_tokens(const char *, const char *, uint32_t *,
                                 uint32_t, uint32_t *, uint32_t *);
+extern int aipetllm_chat_continue_tokens(const char *, const char *,
+ const uint32_t *, uint32_t, uint32_t *, uint32_t, uint32_t *, uint32_t *);
+extern void *aipetllm_stream_open(const char *);
+extern int aipetllm_stream_emit(void *, uint32_t);
+extern void aipetllm_stream_close(void *);
+
+static pthread_mutex_t g_chat_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t g_chat_history[AIPETLLM_SEQUENCE_LIMIT];
+static uint32_t g_chat_history_count;
+static char g_chat_model[MODEL_VALUE_LIMIT];
 
 static const char *file_type(mode_t mode)
 {
@@ -128,7 +139,7 @@ static int parse_id_list(const char *text, uint32_t *ids, size_t capacity,
     }
 }
 
-static int generate_ids(int argc, char *argv[])
+static int generate_ids_locked(int argc, char *argv[])
 {
   struct aipetllm_sequence_s sequence = {0};
   uint32_t limit[1];
@@ -147,12 +158,27 @@ static int generate_ids(int argc, char *argv[])
       return 1;
     }
 
-  if (strcmp(argv[1], "chat") == 0)
+  if (strcmp(argv[1], "chat") == 0 || strcmp(argv[1], "ask") == 0)
     {
       sequence.chat_mode = 1;
+      if (strcmp(argv[1], "ask") == 0 && g_chat_history_count != 0)
+        {
+          if (strcmp(g_chat_model, argv[2]) != 0)
+            {
+              fputs("ask: model changed; use newchat\n", stderr);
+              return 1;
+            }
+
+          result = aipetllm_chat_continue_tokens(argv[2], argv[3],
+            g_chat_history, g_chat_history_count, sequence.input,
+            AIPETLLM_SEQUENCE_LIMIT, &sequence.input_count, &sequence.chat_stop);
+        }
+      else
+        {
       result = aipetllm_chat_tokens(argv[2], argv[3], sequence.input,
                                     AIPETLLM_SEQUENCE_LIMIT,
                                     &sequence.input_count, &sequence.chat_stop);
+        }
     }
   else if (strcmp(argv[1], "generate") == 0)
     {
@@ -194,11 +220,56 @@ static int generate_ids(int argc, char *argv[])
         }
     }
 
+  if (sequence.chat_mode && sequence.generate_limit != 0)
+    {
+      sequence.emit_context = aipetllm_stream_open(argv[2]);
+      if (sequence.emit_context == NULL) return 1;
+      sequence.emit = aipetllm_stream_emit;
+    }
+
   result = aipetllm_sequence_fast_checkpoint(argv[2], &sequence, mask);
+  if (sequence.emit_context != NULL)
+    {
+      aipetllm_stream_close(sequence.emit_context);
+    }
+
+  if (result == 0)
+    {
+      printf("llm-timing: first-prediction=%.4f sec after-first=%.4f sec "
+             "text-tokens=%" PRIu32 " (load/tokenizer excluded)\n",
+             sequence.first_token_seconds, sequence.after_first_seconds,
+             sequence.output_count);
+    }
+
+  if (result == 0 && sequence.output_count != 0 &&
+      strcmp(argv[1], "ask") == 0)
+    {
+      uint32_t needed = sequence.input_count + sequence.output_count + 1;
+      if (needed > AIPETLLM_SEQUENCE_LIMIT ||
+          strlen(argv[2]) >= sizeof(g_chat_model))
+        {
+          puts("ask: turn not retained (history capacity); use newchat");
+        }
+      else
+        {
+          memcpy(g_chat_history, sequence.input,
+                 sequence.input_count * sizeof(uint32_t));
+          memcpy(g_chat_history + sequence.input_count, sequence.output,
+                 sequence.output_count * sizeof(uint32_t));
+          g_chat_history[needed - 1] = sequence.chat_stop;
+          g_chat_history_count = needed;
+          strcpy(g_chat_model, argv[2]);
+          printf("ask: retained=%" PRIu32 "/64 tokens; KV recomputed per turn\n",
+                 needed);
+        }
+    }
+
   if (result != 0 || sequence.output_count == 0)
     {
       return result;
     }
+
+  if (sequence.emit != NULL) return result;
 
   for (index = 0; index < sequence.output_count; index++)
     {
@@ -208,6 +279,23 @@ static int generate_ids(int argc, char *argv[])
     }
 
   return aipetllm_decode_checkpoint(argv[2], sequence.output_count, id_pointer);
+}
+
+static int generate_ids(int argc, char *argv[])
+{
+  int result;
+  int old_cancel;
+  if (strcmp(argv[1], "ask") != 0) return generate_ids_locked(argc, argv);
+  if (pthread_mutex_trylock(&g_chat_lock) != 0)
+    {
+      fputs("ask: session busy\n", stderr);
+      return 1;
+    }
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancel);
+  result = generate_ids_locked(argc, argv);
+  pthread_mutex_unlock(&g_chat_lock);
+  pthread_setcancelstate(old_cancel, NULL);
+  return result;
 }
 
 static int path_check(const char *path)
@@ -753,12 +841,40 @@ static void usage(void)
   puts("  aipetllm generateids model.gguf token1,token2 count[0..64] [cores]");
   puts("  aipetllm generate model.gguf \"raw text\" count[0..64] [cores]");
   puts("  aipetllm chat model.gguf \"message\" count[0..64] [cores]");
+  puts("  aipetllm ask model.gguf \"message\" count[0..64] [cores]");
+  puts("  aipetllm newchat | history | stop | runstatus");
   puts("  aipetllm cacheinfo | unload (persistent RAM model)");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
 
 int main(int argc, char **argv)
 {
+  if (argc == 2 && (strcmp(argv[1], "stop") == 0 ||
+                    strcmp(argv[1], "runstatus") == 0))
+    {
+      return aipetllm_generation_control(strcmp(argv[1], "stop") == 0);
+    }
+
+  if (argc == 2 && (strcmp(argv[1], "newchat") == 0 ||
+                    strcmp(argv[1], "history") == 0))
+    {
+      if (pthread_mutex_trylock(&g_chat_lock) != 0)
+        {
+          fputs("session busy; stop active ask first\n", stderr);
+          return 1;
+        }
+      if (strcmp(argv[1], "newchat") == 0)
+        {
+          memset(g_chat_history, 0, sizeof(g_chat_history));
+          g_chat_history_count = 0;
+          g_chat_model[0] = '\0';
+        }
+      printf("llm-history: tokens=%" PRIu32 "/64 model='%s' RAM-only\n",
+             g_chat_history_count, g_chat_model);
+      pthread_mutex_unlock(&g_chat_lock);
+      return 0;
+    }
+
   if (argc == 2 && strcmp(argv[1], "cpucheck") == 0)
     {
       return aipetllm_cpu_checkpoint();
@@ -767,8 +883,8 @@ int main(int argc, char **argv)
   if (argc == 2 && strcmp(argv[1], "info") == 0)
     {
       printf("backend=CPU/ARM64 model=%s\n", MODEL_DEFAULT);
-      puts("stage=GGUF tensor/Qwen2 validation; GGML graph execution pending");
-      puts("recommended context=512 initial threads=2 quant=Q4_K_M");
+      puts("stage=Qwen2 CPU generation/ChatML; RAM model and six-core pool");
+      puts("bounded prompt/history=64 tokens output=64; default cores=2..7");
       return 0;
     }
 
@@ -934,7 +1050,8 @@ int main(int argc, char **argv)
 
   if ((argc == 5 || argc == 6) &&
       (strcmp(argv[1], "generateids") == 0 ||
-       strcmp(argv[1], "generate") == 0 || strcmp(argv[1], "chat") == 0))
+       strcmp(argv[1], "generate") == 0 || strcmp(argv[1], "chat") == 0 ||
+       strcmp(argv[1], "ask") == 0))
     {
       return generate_ids(argc, argv);
     }

@@ -825,6 +825,148 @@ extern "C" int aipetllm_encode_tokens(const char *path, const char *prompt,
   return encode_tokens(path, prompt, output, capacity, count);
 }
 
+struct token_stream
+{
+  std::vector<std::string> pieces;
+  std::string pending;
+  int inverse[512];
+};
+
+extern "C" void *aipetllm_stream_open(const char *path)
+{
+  vocabulary vocab;
+  if (!vocab.load(path)) return nullptr;
+  auto *stream = new token_stream;
+  stream->pieces.swap(vocab.tokens);
+  for (unsigned index = 0; index < 512; index++) stream->inverse[index] = -1;
+  for (unsigned byte = 0; byte < 256; byte++)
+    stream->inverse[byte_codepoint(byte)] = static_cast<int>(byte);
+  return stream;
+}
+
+extern "C" int aipetllm_stream_emit(void *context, std::uint32_t token)
+{
+  auto *stream = static_cast<token_stream *>(context);
+  if (stream == nullptr || token >= stream->pieces.size()) return 1;
+  const auto &piece = stream->pieces[token];
+  for (std::size_t offset = 0; offset < piece.size();)
+    {
+      std::uint32_t codepoint;
+      std::size_t length;
+      if (!next_unit(piece, offset, codepoint, length) || codepoint >= 512 ||
+          stream->inverse[codepoint] < 0) return 1;
+      stream->pending.push_back(static_cast<char>(stream->inverse[codepoint]));
+      offset += length;
+    }
+
+  /* Byte-level BPE can split a Chinese UTF-8 character across tokens. Hold
+   * an incomplete trailing character, avoiding diagnostics between bytes.
+   */
+  std::size_t complete = 0;
+  while (complete < stream->pending.size())
+    {
+      std::uint32_t codepoint;
+      std::size_t length;
+      if (!next_unit(stream->pending, complete, codepoint, length)) break;
+      complete += length;
+    }
+  if (complete != 0)
+    {
+      if (std::fwrite(stream->pending.data(), 1, complete, stdout) != complete)
+        return 1;
+      std::fflush(stdout);
+      stream->pending.erase(0, complete);
+    }
+  if (stream->pending.size() > 4) return 1;
+  return 0;
+}
+
+extern "C" void aipetllm_stream_close(void *context)
+{
+  auto *stream = static_cast<token_stream *>(context);
+  if (stream != nullptr && !stream->pending.empty())
+    {
+      std::fputs("\xef\xbf\xbd", stdout);
+      std::fputs("\naipetllm: incomplete UTF-8 tail replaced\n", stderr);
+    }
+  delete stream;
+}
+
+#ifdef AIPETLLM_BPE_TEST_API
+extern "C" int aipetllm_stream_split_test(const char *path)
+{
+  vocabulary vocab;
+  if (!vocab.load(path)) return 1;
+  auto *stream = static_cast<token_stream *>(aipetllm_stream_open(path));
+  if (stream == nullptr) return 1;
+  const unsigned char bytes[] = {0xe4, 0xbd, 0xa0};
+  int result = 0;
+  for (unsigned index = 0; index < 3; index++)
+    {
+      char byte = static_cast<char>(bytes[index]);
+      auto token = vocab.token_ids.find(byte_encode(&byte, 1));
+      if (token == vocab.token_ids.end() ||
+          aipetllm_stream_emit(stream, token->second) != 0 ||
+          stream->pending.size() != (index == 2 ? 0 : index + 1))
+        {
+          result = 1;
+          break;
+        }
+    }
+  aipetllm_stream_close(stream);
+  return result;
+}
+#endif
+
+extern "C" int aipetllm_chat_continue_tokens(const char *path,
+ const char *prompt, const std::uint32_t *history, std::uint32_t history_count,
+ std::uint32_t *output, std::uint32_t capacity, std::uint32_t *count,
+ std::uint32_t *stop_token)
+{
+  vocabulary vocab;
+  if (prompt == nullptr || prompt[0] == '\0' ||
+      std::strlen(prompt) > 4096 || std::strstr(prompt, "<|") != nullptr ||
+      history == nullptr || output == nullptr || count == nullptr ||
+      stop_token == nullptr || history_count == 0 || history_count >= capacity ||
+      !vocab.load(path)) return 1;
+  auto start = vocab.token_ids.find("<|im_start|>");
+  auto end = vocab.token_ids.find("<|im_end|>");
+  if (start == vocab.token_ids.end() || end == vocab.token_ids.end() ||
+      history[history_count - 1] != end->second) return 1;
+  for (std::uint32_t index = 0; index < history_count; index++)
+    {
+      if (history[index] >= vocab.tokens.size()) return 1;
+      output[index] = history[index];
+    }
+  *count = history_count;
+  *stop_token = end->second;
+  auto ordinary = [&](const char *text) -> bool
+    {
+      std::uint32_t written = 0;
+      if (*count >= capacity || encode_with_vocab(vocab, path, text,
+          output + *count, capacity - *count, &written) != 0) return false;
+      *count += written;
+      return true;
+    };
+  auto special = [&](std::uint32_t token) -> bool
+    {
+      if (*count >= capacity) return false;
+      output[(*count)++] = token;
+      return true;
+    };
+  if (!ordinary("\n") || !special(start->second) || !ordinary("user\n") ||
+      !ordinary(prompt) || !special(end->second) || !ordinary("\n") ||
+      !special(start->second) || !ordinary("assistant\n"))
+    {
+      *count = 0;
+      std::fputs("aipetllm: history full; use newchat\n", stderr);
+      return 1;
+    }
+  std::printf("chatml tokens=%" PRIu32 " history=%" PRIu32 "\n",
+              *count, history_count);
+  return 0;
+}
+
 extern "C" int aipetllm_bpe_checkpoint(const char *path, const char *prompt)
 {
   return encode_tokens(path, prompt, nullptr, 0, nullptr);
