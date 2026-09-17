@@ -41,3 +41,15 @@ free
 ## 主机编码回归
 
 `tools/test-aipetllm-encode-api.cxx` 是独立主机测试，不参与固件编译。WSL g++ C++17 编译，与本地 `llama.cpp-0.1.2/models/ggml-vocab-qwen2.gguf` 运行退出 0：文本 Hello world 返回 9707,1879；容量不足、空提示词、空输出指针拒绝。该测试只验证编码接口，不验证 Transformer 生成精度。
+
+## 构建和镜像存档
+
+固件源码提交 `4ce2892`；编码回归工具提交 `0562854`。构建退出 0，内核 1721792 字节。ELF/Image/System.map、构建、封装、验证和编码回归日志位于仓库本地 `archives/llm-v94/`（不随代码上传）。官方工作区 `apps/system/aipetllm` 已恢复为构建前不存在的状态，临时覆盖由构建脚本 EXIT 恢复。
+
+- 镜像：上层目录 `openvela-a733-cubie-a7z-sd-llm-generate-v94-candidate.img`，2147483648 字节。
+- 内核 SHA256：`73e9ad848612c50a6b1f448ac70d8071b229abfb783a5b8cc08e06280f968e91`。
+- 镜像 SHA256：`3ec65add737dbadf911fb4d318d5ea00060c9628f4943ab4c2a155fd577952a8`。
+- 内核回读一致，ext4 检查通过；GPT 无错误，仅继承分区 4 尾部不是 2048-sector 边界的提示。
+- `g_cpu_idlestackalloc=423f3000`，`g_idle_topstack=42403000`，页对齐断言保持。
+
+这是候选版本，尚未得到 v94 板端连续生成日志。不可把“镜像校验通过”记录成“生成实机验证通过”。
