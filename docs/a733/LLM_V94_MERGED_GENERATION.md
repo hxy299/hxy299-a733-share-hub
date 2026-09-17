@@ -37,3 +37,7 @@ free
 任意 kill/Ctrl+C 的清理尚未审计，不宣称可随意中断。模型缓存互斥保护和关闭 pthread cancellation 仅覆盖已有正常调用路径。高负载网络并行、长时间生成、重复加载/卸载内存压力仍待测试。
 
 保留 v93 镜像、源码标签和 `a733-v93-before-merged-generation.bundle` 回退。构建前保存源码提交/bundle；通过临时 overlay 构建并恢复官方文件。整卡烧写前备份 TF 卡模型、密钥和配置，生成镜像不含用户后来传入的 1.1 GB GGUF。
+
+## 主机编码回归
+
+`tools/test-aipetllm-encode-api.cxx` 是独立主机测试，不参与固件编译。WSL g++ C++17 编译，与本地 `llama.cpp-0.1.2/models/ggml-vocab-qwen2.gguf` 运行退出 0：文本 Hello world 返回 9707,1879；容量不足、空提示词、空输出指针拒绝。该测试只验证编码接口，不验证 Transformer 生成精度。
