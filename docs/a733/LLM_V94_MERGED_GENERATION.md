@@ -53,3 +53,17 @@ free
 - `g_cpu_idlestackalloc=423f3000`，`g_idle_topstack=42403000`，页对齐断言保持。
 
 这是候选版本，尚未得到 v94 板端连续生成日志。不可把“镜像校验通过”记录成“生成实机验证通过”。
+
+## 首次连续生成实机记录
+
+用户日志来源：`C:/Users/Lenovo/.codex/attachments/a1c3a033-8e40-4d76-80df-80818e16fac5/pasted-text.txt`。以下记录更新前述候选状态，但不是完整精度验收。
+
+`generate MODEL "Hello world" 8` 成功返回 NSH：BPE 为 9707,1879；默认 mask=fc、6 workers；模型加载 174.9803 秒，计算 4.3159 秒。共处理 9 个位置（2 个提示 token 和 7 个反馈 token），输出 8 个 token：271,2,2585,311,1855,264,501,1196。解码 28 字节，为两个换行加 `# How to create a new user`。这是原始文本续写而非 ChatML 对话。
+
+计算含预填充、LM head 和诊断输出：8/4.3159≈1.85 个输出 token/秒，仅为本次整体吞吐；不能把它作为纯解码稳态速度。首次 175 秒加载不包含在该计算吞吐内，最终文本解码也在计算计时外。
+
+position=0 完整复现基线：final-state=17a04f7d、logits=7fdfee67、argmax=6233。**position=1 尚未通过旧版本数值回归**：本次 layer[0]=c309f7a8、final-state=fcdda499、logits=f5c952cb、argmax=271；v93 相同输入为 layer[0]=6b3938ef、final-state=d2ec6d95、logits=96794b9a、argmax=4894。差异从第一层已出现，应核对泛化 attention 的累加/浮点路径和 KV 布局，并与独立参考对比，不得直接判定新旧哪个正确。
+
+此日志没有第二次生成、cacheinfo、卸载或内存压力记录，不能据此宣称线程池长期稳定、KV 释放无泄漏或 EOS 提前停止已测试。用户报告此前停顿是 CPU 过热降频；日志无温度、频率或热管理证据，暂按现场观察记录，原因未独立确认。
+
+当前结论：单次实机连续生成、文本解码和正常返回已确认；数值回归、独立参考精度、重复稳定性和散热条件下的性能仍待核对。下一步优先复测同输入的 forward2fast、generateids 和 generate，定位第二位置的差异；然后加入可靠特殊 token/对话模板，而不是直接把此输出当作聊天效果验收。
