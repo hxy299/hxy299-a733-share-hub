@@ -6,6 +6,27 @@
 先完成 Linux 版功能：USB 麦克风、原云端 ASR、UART TW-TTS、动作与屏幕。
 I2S 麦克风/扬声器属于后续新增，当前不启用。
 
+## 用户确认的硬件信息
+
+- USB 麦克风型号未知，是用于树莓派的设备；用户确认 Linux 下即插即用。不能仅凭此判断 UAC 版本、采样率、端点或是否需要厂商特殊处理，后续按真实 USB 描述符适配，无需先知道商品型号。
+- UART TTS 已连接 **UART4**。该信息是硬件控制器编号，不等于 openvela 的 `/dev/ttyS4`；仍须核对板级引脚复用、独立串口注册及设备节点，不能复用控制台。
+- I2S 资料已登记在下方，仅作为后续参考，本轮不开发、不配置、不启用 I2S。
+
+## I2S 后续资料位置（只读参考）
+
+原目录：`D:\My-Program\AI-Agent-Program\cc-program\Radxa_A7Z_Sencond_Pro\Old-Program\a7z_i2s_audio`。
+
+- `README.md`：Linux bring-up 路线、接线建议和验证顺序，已只读查看。
+- README 提到的 `a7z-i2s-max98357a-inmp441.dtso`：Linux device tree overlay 模板；本轮未核查内容，不能直接作为 openvela 驱动。
+- README 提到的 `check_i2s_support.sh`：Linux I2S/ALSA 支持检查脚本；本轮未核查内容。
+
+README 所述模块：**MAX98357A** I2S 功放、**INMP441** I2S 麦克风。
+资料中的候选引脚：BCLK=Pin12/PB5，LRCK=Pin35/PB6，MCLK=Pin36/PB4，功放 DIN=Pin40/PB7，麦克风 DOUT=Pin38/PB8。
+这些接线仅登记原资料内容，未在本轮重新核验官方引脚表或实际硬件；启用前必须再次核对。
+INMP441 资料建议 3.3V、L/R 接 GND；功放供电与模式脚按实际模块手册确认。
+后续先播放、再录音，最后整合语音对话；必须在原 Linux 版移植全链路跑通后才开始。
+Linux 的 ALSA、simple-audio-card 和设备树 overlay 方案不能直接代替 openvela 的控制器/音频驱动与 Media API 接入。
+
 ## 本轮代码与验证
 
 1. `apps/system/aipet/uart_tts.{hxx,cxx}`（均在 board overlay 下）：实现原版 TW-TTS 文本帧和音量/速度/音调参数帧；9600、8N1；处理部分写、EINTR/EAGAIN 和 6 秒写超时。必须显式指定独立串口，拒绝 console 和 ttyS0，不自动配置 GPIO。记录帧数、失败数、errno。计数表示提交成功，不表示模块已实际发声。
