@@ -1318,6 +1318,45 @@ static int apply_normal_rope(float *values, uint64_t heads,
   return 0;
 }
 
+/* Qwen2 uses NeoX split-half rotation, not adjacent-pair NORMAL RoPE.
+ * Keep the legacy diagnostic helper separate from model execution.
+ */
+
+static int apply_qwen2_rope(float *values, uint64_t heads,
+                            uint64_t head_dimension,
+                            uint32_t rotary_dimension,
+                            uint32_t position, float frequency_base)
+{
+  uint64_t head;
+  uint32_t pair;
+  if (heads == 0 || head_dimension == 0 ||
+      rotary_dimension == 0 || (rotary_dimension & 1) != 0 ||
+      rotary_dimension > head_dimension || !isfinite(frequency_base) ||
+      frequency_base <= 1.0f)
+    {
+      return -EINVAL;
+    }
+
+  for (head = 0; head < heads; head++)
+    {
+      float *row = values + head * head_dimension;
+      for (pair = 0; pair < rotary_dimension / 2; pair++)
+        {
+          uint32_t other = pair + rotary_dimension / 2;
+          float angle = position *
+            powf(frequency_base, -(float)(2 * pair) / rotary_dimension);
+          float cosine = cosf(angle);
+          float sine = sinf(angle);
+          float first = row[pair];
+          float second = row[other];
+          row[pair] = first * cosine - second * sine;
+          row[other] = first * sine + second * cosine;
+        }
+    }
+
+  return 0;
+}
+
 static int normalized_token(FILE *stream, uint64_t data_start,
                             const struct tensor_info_s *embedding,
                             const float *norm_weight, float epsilon,
@@ -1630,10 +1669,10 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
                            hidden) < 0 ||
               add_f32_bias(stream, data_start, attention_k_bias, key,
                            value_dimensions) < 0 ||
-              apply_normal_rope(query, head_count, head_dimension,
+              apply_qwen2_rope(query, head_count, head_dimension,
                                 rotary_dimension, position,
                                 frequency_base) < 0 ||
-              apply_normal_rope(key, head_count_kv, head_dimension,
+              apply_qwen2_rope(key, head_count_kv, head_dimension,
                                 rotary_dimension, position,
                                 frequency_base) < 0)
             {
