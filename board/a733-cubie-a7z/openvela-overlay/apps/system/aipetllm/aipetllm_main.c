@@ -629,6 +629,7 @@ static void usage(void)
   puts("  aipetllm block2 model.gguf first-token-id second-token-id");
   puts("  aipetllm forward1 model.gguf token-id");
   puts("  aipetllm forwardfast model.gguf token-id [cores: 2,3,4,5,6,7]");
+  puts("  aipetllm forward2fast model.gguf token1 token2 [cores]");
   puts("  aipetllm cacheinfo | unload (persistent RAM model)");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
@@ -806,6 +807,62 @@ int main(int argc, char **argv)
                     strcmp(argv[1], "unload") == 0))
     {
       return aipetllm_cache_control(strcmp(argv[1], "unload") == 0);
+    }
+
+  if ((argc == 5 || argc == 6) && strcmp(argv[1], "forward2fast") == 0)
+    {
+      extern int aipetllm_forward2_fast_checkpoint(const char *, uint32_t,
+                                                  uint32_t, unsigned int);
+      char *end;
+      unsigned long first = strtoul(argv[3], &end, 10);
+      unsigned long second;
+      unsigned int mask = 0xfc;
+      if (end == argv[3] || *end != '\0' || first > UINT32_MAX ||
+          argv[3][0] == '-')
+        {
+          return 1;
+        }
+
+      second = strtoul(argv[4], &end, 10);
+      if (end == argv[4] || *end != '\0' || second > UINT32_MAX ||
+          argv[4][0] == '-')
+        {
+          return 1;
+        }
+
+      if (argc == 6)
+        {
+          const char *cursor = argv[5];
+          mask = 0;
+          for (;;)
+            {
+              unsigned int bit;
+              if (*cursor < '0' || *cursor > '7')
+                {
+                  return 1;
+                }
+
+              bit = 1u << (*cursor++ - '0');
+              if (mask & bit)
+                {
+                  return 1;
+                }
+
+              mask |= bit;
+              if (*cursor == '\0')
+                {
+                  break;
+                }
+
+              if (*cursor++ != ',' || *cursor == '\0')
+                {
+                  return 1;
+                }
+            }
+        }
+
+      return aipetllm_forward2_fast_checkpoint(argv[2], (uint32_t)first,
+                                               (uint32_t)second, mask);
     }
 
   if ((argc == 4 && strcmp(argv[1], "forward1") == 0) ||

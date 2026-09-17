@@ -1413,7 +1413,10 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
                                      uint32_t head_count_kv,
                                      float epsilon, unsigned int cpu_mask,
                                      const uint8_t *model_base,
-                                     size_t model_bytes)
+                                     size_t model_bytes,
+                                     int two_tokens, uint32_t second_token,
+                                     uint32_t rotary_dimension,
+                                     float frequency_base)
 {
   struct tensor_info_s *output_norm;
   struct tensor_info_s *output_weight;
@@ -1428,15 +1431,22 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
   float *swiglu = NULL;
   float *down = NULL;
   float *logits = NULL;
+  float *query = NULL;
+  float *key = NULL;
+  float *keys = NULL;
+  float *values = NULL;
   uint64_t hidden;
   uint64_t ffn_hidden = 0;
   uint64_t head_dimension;
   uint64_t index;
   uint32_t layer;
+  uint32_t position;
   int result = 1;
 
   if (embedding == NULL || embedding->dimension_count != 2 ||
-      token_id >= embedding->dimensions[1] || block_count == 0 ||
+      token_id >= embedding->dimensions[1] ||
+      (two_tokens && second_token >= embedding->dimensions[1]) ||
+      block_count == 0 ||
       block_count > QWEN_LAYER_LIMIT || head_count == 0 ||
       head_count_kv == 0 || head_count % head_count_kv != 0)
     {
@@ -1470,11 +1480,48 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
          " hidden=%" PRIu64 " heads=%" PRIu32 "/%" PRIu32 "\n",
          token_id, block_count, hidden, head_count, head_count_kv);
 
+  if (two_tokens)
+    {
+      size_t kv_width = (size_t)head_count_kv * head_dimension;
+      query = malloc((size_t)hidden * sizeof(float));
+      key = malloc(kv_width * sizeof(float));
+      keys = calloc((size_t)block_count * 2 * kv_width, sizeof(float));
+      values = calloc((size_t)block_count * 2 * kv_width, sizeof(float));
+      if (query == NULL || key == NULL || keys == NULL || values == NULL)
+        {
+          goto out;
+        }
+
+      if (rotary_dimension == 0)
+        {
+          rotary_dimension = (uint32_t)head_dimension;
+        }
+    }
+
+  for (position = 0; position < (two_tokens ? 2u : 1u); position++)
+    {
+      if (position != 0 &&
+          read_dequantized_row(stream, data_start + embedding->offset,
+                              embedding, second_token, state) < 0)
+        {
+          goto out;
+        }
+
+      if (two_tokens)
+        {
+          printf("forward2 position=%" PRIu32 " token=%" PRIu32 "\n",
+                 position, position == 0 ? token_id : second_token);
+        }
+
   for (layer = 0; layer < block_count; layer++)
     {
       struct tensor_info_s *attention_norm;
       struct tensor_info_s *attention_v;
       struct tensor_info_s *attention_v_bias;
+      struct tensor_info_s *attention_q;
+      struct tensor_info_s *attention_k;
+      struct tensor_info_s *attention_q_bias;
+      struct tensor_info_s *attention_k_bias;
       struct tensor_info_s *attention_output;
       struct tensor_info_s *ffn_norm;
       struct tensor_info_s *ffn_gate;
@@ -1496,6 +1543,10 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
       FIND_LAYER_TENSOR(attention_norm, "attn_norm.weight");
       FIND_LAYER_TENSOR(attention_v, "attn_v.weight");
       FIND_LAYER_TENSOR(attention_v_bias, "attn_v.bias");
+      FIND_LAYER_TENSOR(attention_q, "attn_q.weight");
+      FIND_LAYER_TENSOR(attention_k, "attn_k.weight");
+      FIND_LAYER_TENSOR(attention_q_bias, "attn_q.bias");
+      FIND_LAYER_TENSOR(attention_k_bias, "attn_k.bias");
       FIND_LAYER_TENSOR(attention_output, "attn_output.weight");
       FIND_LAYER_TENSOR(ffn_norm, "ffn_norm.weight");
       FIND_LAYER_TENSOR(ffn_gate, "ffn_gate.weight");
@@ -1525,7 +1576,7 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
           goto out;
         }
 
-      if (layer == 0)
+      if (value == NULL)
         {
           ffn_hidden = ffn_gate->dimensions[1];
           value = malloc((size_t)attention_v->dimensions[1] * sizeof(float));
@@ -1560,14 +1611,87 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
           goto out;
         }
 
+      if (two_tokens)
+        {
+          if (attention_q == NULL || attention_k == NULL ||
+              attention_q->dimension_count != 2 ||
+              attention_k->dimension_count != 2 ||
+              attention_q->dimensions[0] != hidden ||
+              attention_q->dimensions[1] != hidden ||
+              attention_k->dimensions[0] != hidden ||
+              attention_k->dimensions[1] != value_dimensions ||
+              read_parallel_matvec(stream, data_start + attention_q->offset,
+                                   attention_q, normalized, query, cpu_mask,
+                                   model_base, model_bytes) < 0 ||
+              read_parallel_matvec(stream, data_start + attention_k->offset,
+                                   attention_k, normalized, key, cpu_mask,
+                                   model_base, model_bytes) < 0 ||
+              add_f32_bias(stream, data_start, attention_q_bias, query,
+                           hidden) < 0 ||
+              add_f32_bias(stream, data_start, attention_k_bias, key,
+                           value_dimensions) < 0 ||
+              apply_normal_rope(query, head_count, head_dimension,
+                                rotary_dimension, position,
+                                frequency_base) < 0 ||
+              apply_normal_rope(key, head_count_kv, head_dimension,
+                                rotary_dimension, position,
+                                frequency_base) < 0)
+            {
+              fputs("aipetllm: forward2 Q/K/RoPE failed\n", stderr);
+              goto out;
+            }
+
+          memcpy(keys + ((size_t)layer * 2 + position) * value_dimensions,
+                 key, (size_t)value_dimensions * sizeof(float));
+          memcpy(values + ((size_t)layer * 2 + position) * value_dimensions,
+                 value, (size_t)value_dimensions * sizeof(float));
+        }
+
       for (head = 0; head < head_count; head++)
         {
           uint64_t source = (uint64_t)(head / query_per_kv) *
                             head_dimension;
           uint64_t destination = (uint64_t)head * head_dimension;
 
-          memcpy(&context[destination], &value[source],
-                 (size_t)head_dimension * sizeof(float));
+          if (!two_tokens || position == 0)
+            {
+              memcpy(&context[destination], &value[source],
+                     (size_t)head_dimension * sizeof(float));
+            }
+          else
+            {
+              double scores[2] = {0.0, 0.0};
+              float probability[2];
+              float maximum;
+              float total;
+              uint32_t past;
+              uint64_t component;
+              for (past = 0; past <= position; past++)
+                {
+                  size_t base = ((size_t)layer * 2 + past) *
+                                value_dimensions + source;
+                  for (component = 0; component < head_dimension; component++)
+                    {
+                      scores[past] += (double)query[destination + component] *
+                                      keys[base + component];
+                    }
+
+                  scores[past] *= 1.0 / sqrt((double)head_dimension);
+                }
+
+              maximum = (float)fmax(scores[0], scores[1]);
+              probability[0] = expf((float)scores[0] - maximum);
+              probability[1] = expf((float)scores[1] - maximum);
+              total = probability[0] + probability[1];
+              for (component = 0; component < head_dimension; component++)
+                {
+                  size_t base = (size_t)layer * 2 * value_dimensions +
+                                source + component;
+                  context[destination + component] =
+                    probability[0] / total * values[base] +
+                    probability[1] / total * values[base + value_dimensions];
+                }
+            }
         }
 
       if (read_parallel_matvec(stream,
@@ -1655,7 +1779,10 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
       goto out;
     }
 
-  logits = malloc((size_t)output_weight->dimensions[1] * sizeof(float));
+  if (logits == NULL)
+    {
+      logits = malloc((size_t)output_weight->dimensions[1] * sizeof(float));
+    }
   if (logits == NULL ||
       read_parallel_matvec(stream, data_start + output_weight->offset,
                             output_weight, normalized, logits, cpu_mask,
@@ -1690,11 +1817,25 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
            output_weight->dimensions[1]);
   }
 
+    }
+
+  if (two_tokens)
+    {
+      puts("Qwen2 28-layer two-token causal KV checkpoint passed; "
+           "session persistence and generation pending.");
+    }
+  else
+    {
   puts("Qwen2 28-layer single-token forward and LM head checkpoint passed; "
        "multi-token KV-cache generation pending.");
+    }
   result = 0;
 
 out:
+  free(values);
+  free(keys);
+  free(key);
+  free(query);
   free(logits);
   free(down);
   free(swiglu);
@@ -1782,7 +1923,7 @@ static int embedding_pipeline_checkpoint(const char *path,
   int ret = 1;
 
   projection_mode &= 255;
-  if (projection_mode == 7)
+  if (projection_mode == 7 || projection_mode == 8)
     {
       if (strlen(path) >= sizeof(g_model_path) ||
           pthread_mutex_trylock(&g_model_lock) != 0)
@@ -1822,7 +1963,7 @@ static int embedding_pipeline_checkpoint(const char *path,
       goto out;
     }
 
-  if (projection_mode == 7 && !cache_hit)
+  if ((projection_mode == 7 || projection_mode == 8) && !cache_hit)
     {
       struct stat model_stat;
       size_t loaded = 0;
@@ -2086,13 +2227,15 @@ static int embedding_pipeline_checkpoint(const char *path,
                  ~(uint64_t)(alignment - 1);
   }
 
-  if (projection_mode == 6 || projection_mode == 7)
+  if (projection_mode == 6 || projection_mode == 7 || projection_mode == 8)
     {
       ret = qwen2_forward1_checkpoint(stream, data_start, tensors,
                                       tensor_count, embedding, token_id,
                                       block_count, head_count,
                                       head_count_kv, epsilon, cpu_mask,
-                                      model_memory, model_length);
+                                      model_memory, model_length,
+                                      projection_mode == 8, second_token_id,
+                                      rotary_dimension, frequency_base);
       goto out;
     }
 
@@ -2801,12 +2944,12 @@ out:
       fclose(stream);
     }
 
-  if (projection_mode == 7 && model_memory != NULL)
+  if ((projection_mode == 7 || projection_mode == 8) && model_memory != NULL)
     {
       if (ret == 0)
         {
           clock_gettime(CLOCK_MONOTONIC, &finished);
-          printf("forwardfast: compute=%.4f sec; single-token checkpoint; "
+          printf("forwardfast: compute=%.4f sec; causal forward checkpoint; "
                  "model resident; multi-token generation pending\n",
                  (double)(finished.tv_sec - compute_start.tv_sec) +
                  (double)(finished.tv_nsec - compute_start.tv_nsec) / 1.0e9);
@@ -2886,4 +3029,13 @@ int aipetllm_forward_ram_checkpoint(const char *path, uint32_t token_id,
 {
   return embedding_pipeline_checkpoint(path, token_id,
                                        7 | (int)(cpu_mask << 8), 0, 0);
+}
+
+int aipetllm_forward2_ram_checkpoint(const char *path, uint32_t first_token,
+                                    uint32_t second_token,
+                                    unsigned int cpu_mask)
+{
+  return embedding_pipeline_checkpoint(path, first_token,
+                                       8 | (int)(cpu_mask << 8), 0,
+                                       second_token);
 }

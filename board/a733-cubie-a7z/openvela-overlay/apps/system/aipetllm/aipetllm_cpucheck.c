@@ -14,9 +14,16 @@ int aipetllm_forward_ram_checkpoint(const char *path, uint32_t token_id,
                                    unsigned int cpu_mask);
 int aipetllm_forward_fast_checkpoint(const char *path, uint32_t token_id,
                                     unsigned int cpu_mask);
+int aipetllm_forward2_ram_checkpoint(const char *path, uint32_t first_token,
+                                     uint32_t second_token,
+                                     unsigned int cpu_mask);
+int aipetllm_forward2_fast_checkpoint(const char *path, uint32_t first_token,
+                                      uint32_t second_token,
+                                      unsigned int cpu_mask);
 
-int aipetllm_forward_fast_checkpoint(const char *path, uint32_t token_id,
-                                    unsigned int cpu_mask)
+static int forward_fast(const char *path, uint32_t token_id,
+                        unsigned int cpu_mask, int two_tokens,
+                        uint32_t second_token)
 {
   cpu_set_t original = 0;
   cpu_set_t selected = 0;
@@ -48,7 +55,9 @@ int aipetllm_forward_fast_checkpoint(const char *path, uint32_t token_id,
   printf("forwardfast: cores-mask=%02x workers=%d; "
          "A76:A55 row weight=3:1; system scheduling unchanged\n",
          cpu_mask, count);
-  result = aipetllm_forward_ram_checkpoint(path, token_id, cpu_mask);
+  result = two_tokens ?
+    aipetllm_forward2_ram_checkpoint(path, token_id, second_token, cpu_mask) :
+    aipetllm_forward_ram_checkpoint(path, token_id, cpu_mask);
 
   if (sched_setaffinity(0, sizeof(original), &original) < 0)
     {
@@ -57,6 +66,19 @@ int aipetllm_forward_fast_checkpoint(const char *path, uint32_t token_id,
     }
 
   return result;
+}
+
+int aipetllm_forward_fast_checkpoint(const char *path, uint32_t token_id,
+                                    unsigned int cpu_mask)
+{
+  return forward_fast(path, token_id, cpu_mask, 0, 0);
+}
+
+int aipetllm_forward2_fast_checkpoint(const char *path, uint32_t first_token,
+                                     uint32_t second_token,
+                                     unsigned int cpu_mask)
+{
+  return forward_fast(path, first_token, cpu_mask, 1, second_token);
 }
 
 /* Diagnostic only: move this task, read identity, run the same bounded integer
