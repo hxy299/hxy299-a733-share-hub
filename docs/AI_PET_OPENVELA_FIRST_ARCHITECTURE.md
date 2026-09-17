@@ -1,5 +1,7 @@
 # AI 桌宠 openvela 优先架构与迁移准则
 
+> 状态更新：v97 已通过本地 Qwen2 中文单/多轮用户测试。下文早期“生成尚未完成”的记录是历史阶段，不再代表最新状态。桌宠移植进度、行为对照和未完成依赖见 [Linux 桌宠移植阶段 1](a733/AIPET_LINUX_PORT_STAGE1.md)。
+
 ## 1. 不可变目标
 
 AI 桌宠是运行在 openvela 上的产品应用，不是把 Linux Python 程序改写成一组 NSH

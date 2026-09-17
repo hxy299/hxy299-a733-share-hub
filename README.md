@@ -48,6 +48,7 @@ YOLOv8n 六输出和动态输入均已通过真机验证，而不是固定输出
 后续 attention 数值对照和单轮对话候选见 [v95 ChatML](docs/a733/LLM_V95_ATTENTION_AUDIT_CHAT.md)。
 合并开发 v96 加入流式输出、有限多轮历史和协作停止，原候选说明及板端验收步骤见 [v96 合并开发](docs/a733/LLM_V96_STREAM_HISTORY_STOP.md)。
 后续用户日志已验证 v96 中文流式回答与两轮记忆；运行中停止及 Ctrl+C 清理仍待验收/修复。正规 `llm` 应用入口及已知边界见 [v97 应用封装](docs/a733/LLM_V97_APP_FRONTEND.md)。
+v97 用户中文多轮测试也已通过；桌宠开始按 Linux 原代码移植，首轮业务核心与 69 个解析行为对照已完成，完整进度和后续接口见 [桌宠移植阶段 1](docs/a733/AIPET_LINUX_PORT_STAGE1.md)。
 
 ## 四、仓库结构
 
