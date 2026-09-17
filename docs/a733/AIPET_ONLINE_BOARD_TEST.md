@@ -10,6 +10,9 @@
 配置保留 CONFIG_SMP_NCPUS=8，启用 CONFIG_EXAMPLES_AI_AGENT_VELA，禁用 Agent shell 工具。
 候选镜像名为 `openvela-a733-cubie-a7z-sd-online-agent-v98-candidate.img`，在比赛仓库的上一级目录；
 镜像生成校验日志 `a733-online-agent-v98-image.log` 与镜像同目录。
+最终镜像 2,147,483,648 字节；加入 CA/SOUL 后的 SHA256：
+`d9e27f996c12d0b47a65e573afa3914f1a26e797cbcad24ae0abf16e3ac68fee`。
+GPT、ext4 检查通过，内核与 CA 回读一致。日志中较早的 f55b... 是添加资源前的中间镜像哈希，不用于最终校验。
 完整烧录测试尚未进行，不代表已达到长期稳定、低延迟或完整语音桌宠验收。
 
 1. 烧录候选镜像前备份 TF 卡数据；烧录会覆盖模型、网络配置和 SSH/FTP 配置。
