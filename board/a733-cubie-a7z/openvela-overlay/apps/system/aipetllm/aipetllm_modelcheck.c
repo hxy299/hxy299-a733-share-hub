@@ -1516,7 +1516,7 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
   uint32_t current_token = token_id;
   uint32_t next_token = 0;
   struct timespec sequence_start;
-  struct timespec first_token_time;
+  struct timespec first_token_time = {0, 0};
   int streaming = sequence != NULL && sequence->emit != NULL;
   int result = 1;
 
