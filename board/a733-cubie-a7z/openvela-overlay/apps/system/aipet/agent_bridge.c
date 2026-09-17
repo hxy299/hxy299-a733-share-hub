@@ -34,6 +34,7 @@ static void receive(const agent_msg_t *msg, void *cookie)
   length = msg->content ? strnlen(msg->content, PET_TEXT_MAX + 1) : 0;
   result = finished >= deadline ? -ETIMEDOUT :
            !length ? -ENODATA : length > PET_TEXT_MAX ? -EMSGSIZE : 0;
+  if (!result && !strncmp(msg->content, "[AIPET_ERROR]", 13)) result = -EIO;
   if (!result) memcpy(response, msg->content, length + 1);
   pending = 0;
   ready = 1;
@@ -119,6 +120,7 @@ void aipet_agent_detach(void)
   pthread_mutex_lock(&lock);
   if (attached) mbus_tap_unregister("pet");
   attached = pending = ready = 0;
+  cancelled = 1;
   chat_id[0] = response[0] = '\0';
   pthread_mutex_unlock(&lock);
 }

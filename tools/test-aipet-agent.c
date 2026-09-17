@@ -32,6 +32,10 @@ int main(void)
   assert(aipet_agent_poll(text, 2, NULL) == -ENOSPC);
   assert(aipet_agent_poll(text, sizeof(text), &elapsed) == 0);
   assert(!strcmp(text, "[开心]Hello"));
+  assert(aipet_agent_submit("backend failure", 1000) == 0);
+  captured.content = "[AIPET_ERROR]backend";
+  assert(mbus_tap_try_deliver(&captured));
+  assert(aipet_agent_poll(text, sizeof(text), NULL) == -EIO);
   old = captured;
   assert(aipet_agent_submit("next", 1000) == 0);
   assert(mbus_tap_try_deliver(&old));

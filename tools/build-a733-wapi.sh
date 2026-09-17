@@ -32,6 +32,8 @@ patched_files=(
   packages/ai_agent/CMakeLists.txt
   packages/ai_agent/src/infra/vela_tls.c
   packages/ai_agent/src/tools/tool_registry.c
+  packages/ai_agent/src/core/agent_loop.c
+  packages/ai_agent/src/core/session_mgr.c
 )
 staged_files=()
 aipet_saved=false
@@ -122,7 +124,11 @@ cd "$official"
 export PATH="$official/prebuilts/build-tools/linux-x86_64/bin:$official/prebuilts/gcc/linux-x86_64/aarch64-none-elf/bin:$official/prebuilts/tools/linux-x86_64:$official/prebuilts/tools/cmake/bin:$official/prebuilts/tools/ninja:/usr/bin:/bin:${PATH:-}"
 
 if [[ "${1:-}" == "--incremental" ]]; then
-  cmake --build "$build" -j"${JOBS:-8}"
+  if [[ "${BUILD_KEEP_GOING:-0}" == 1 ]]; then
+    cmake --build "$build" -j"${JOBS:-8}" -- -k 0
+  else
+    cmake --build "$build" -j"${JOBS:-8}"
+  fi
 else
   # build.sh preserves an existing CMake cache.  Remove only this board's
   # generated directory so defconfig changes (notably CONFIG_SMP) cannot be
