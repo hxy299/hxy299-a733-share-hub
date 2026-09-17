@@ -24,6 +24,7 @@ chat 遇模型 EOS 或 im_end 停止，控制 token 不作为回答文本解码�
 aipetllm forward2fast /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf 9707 1879
 aipetllm generateids /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf 9707,1879 4
 aipetllm generateids /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf 9707,1879 4
+aipetllm generateids /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf 9707,1879 1
 aipetllm chat /data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf "Hello" 16
 aipetllm cacheinfo
 aipetllm unload
@@ -33,4 +34,22 @@ free
 
 请保留 attention-audit 全部行、第二位置层 CRC 和 argmax。若显式表达式也不恢复 v93，要继续核对 Q/K/RoPE、模型一致性、编译求值和数据路径，不能直接宣布修复。独立 Linux/llama.cpp 同 GGUF 参考仍必要。chat 对话效果需实机验证；EOS、长度边界和重复压力另外测试。
 
+forward2fast、generateids COUNT=1 和 COUNT=4 的第二位置应一致：三者分配 capacity 分别为 2、2、5，预填充输入相同。若差异随 capacity 改变，应优先检查步长、越界或内存依赖；若同一 v95 三者一致而仍与 v93 不同，继续按阶段 CRC 和浮点求值核对。可用 6,7 核心列表作对照，但不预设多核心就是差异原因。
+
+## 已完成的主机回归
+
+WSL g++ C++17 运行 `tools/test-aipetllm-encode-api.cxx` 退出 0。原始 Hello world 返回 9707,1879；ChatML 共 21 token，包含三枚 im_start、两枚 im_end 和一组连续 9707,1879，stop=151645。容量不足、空输入、空输出和用户控制标记拒绝。此为接口/模板结构检查，不是独立 tokenizer 或 Transformer 精度验证。
+
 v94 源码回退 bundle：上层目录 `a733-v94-before-attention-audit-chat.bundle`。所有实现保存在仓库 overlay；每次构建前提交和 bundle，临时覆盖官方环境后由脚本恢复；新镜像独立命名，不覆盖 v94/v93。整卡烧录前备份 TF 模型、密钥和配置。
+
+## 候选构建存档
+
+固件源码提交 `cc79e5a`；构建、封装及验证均退出 0。官方工作区 `apps/system/aipetllm` 已恢复为构建前不存在的状态，其余覆盖由构建脚本 EXIT 恢复。ELF、Image、System.map、构建/封装/验证/主机编码日志位于本地 `archives/llm-v95/`。
+
+- 上层镜像：`openvela-a733-cubie-a7z-sd-llm-chat-v95-candidate.img`，2147483648 字节。
+- 内核：1729984 字节，SHA256 `a48bc0d0b3dbb7395c701f911cd1a1c0ec2e228c8eab8661ffae5159f55a43db`。
+- 镜像 SHA256：`f56d01c63676b0e748b1067a479ba406faaf0064b17e52ee2fd45449e12114f7`。
+- 内核回读一致，ext4 检查通过，GPT 无错误（保留原分区尾部对齐提示）。
+- `g_cpu_idlestackalloc=423f5000`、`g_idle_topstack=42405000`，页对齐保持。
+
+当前没有 v95 板端日志，不宣称双位置数值差异已修复，也不宣称 ChatML 的回答效果已通过。数值和对话回归是烧录后的首要任务。

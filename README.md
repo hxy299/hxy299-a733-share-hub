@@ -29,7 +29,7 @@ YOLOv8n 六输出和动态输入均已通过真机验证，而不是固定输出
 | --- | --- | --- |
 | ARM64 启动 | 完成 | U-Boot `booti` → BL31 → EL1 → NSH |
 | SMP | 8 核基本验证通过 | 6×A55 + 2×A76，逐核身份/亲和性验证；保留栈页对齐修复 |
-| 本地 Qwen2.5-1.5B | 分阶段验证 | RAM 常驻、持久线程池及 28 层单/双 token 前向已实测；v94 合并文本输入/连续生成待板端验证，不宣称聊天已完成 |
+| 本地 Qwen2.5-1.5B | 分阶段验证 | RAM 常驻、持久线程池、28 层前向及 v94 单次连续生成已实测；第二位置存在版本数值差异，v95 attention 对照/单轮 ChatML 待板端验证，不宣称精度或聊天已验收 |
 | 控制台 | 完成 | UART0 115200 8N1，输入、termios、Ctrl+C |
 | 内存/系统 | 完成 | 4 GiB split-region heap、procfs、`free/ps/uptime` |
 | microSD | 完成 | SDMMC0 PIO，12 MHz/4-bit，多块读取 |
@@ -45,6 +45,7 @@ YOLOv8n 六输出和动态输入均已通过真机验证，而不是固定输出
 [测试证据](docs/TEST_EVIDENCE.md)。
 
 本地 LLM 最新合并开发说明和测试命令见 [v94 生成链路](docs/a733/LLM_V94_MERGED_GENERATION.md)。
+后续 attention 数值对照和单轮对话候选见 [v95 ChatML](docs/a733/LLM_V95_ATTENTION_AUDIT_CHAT.md)。
 
 ## 四、仓库结构
 
