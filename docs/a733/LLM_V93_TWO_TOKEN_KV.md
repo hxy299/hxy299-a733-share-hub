@@ -31,3 +31,16 @@ free
 用户发回两个位置完整数值后，需要与 Linux/llama.cpp 同一 GGUF、同 token 序列、同 Q8_K 输入量化数值路径作参考核对。编译通过和重复一致不能替代模型正确性验证。
 
 整卡烧录前备份模型、密钥及配置。源码恢复 bundle、ELF/Image/System.map 和日志独立存档；不覆盖 v92 恢复版本，不永久修改官方代码。
+
+## 离线构建校验
+
+最终构建源为 70708a9（包含 ff0e1fb 的 NeoX 修正），最终构建及验证退出 0。首轮 build.log 是修正前快照，不作为发布内核；发布对应 build-final.log。
+
+- 镜像：`openvela-a733-cubie-a7z-sd-llm-kv2-v93-candidate.img`，2147483648 字节。
+- 内核：1721792 字节，SHA256 `e346521c5447af5c2b5d9be83530e1817b747d317b3ad4f1873c75042ca072f7`。
+- 镜像 SHA256：`91b989eaa53be8ebb80b9b9b74bf34ec26313d2ca361aa6b7900921167ef8a9f`。
+- 内核回读相符，ext4 检查通过、GPT 无错误（继承分区 4 尾部对齐提示）。
+- g_cpu_idlestackalloc=423f3000、g_idle_topstack=42403000，页对齐断言通过。
+- 对应 ELF/Image/System.map 和日志保存在 `archives/llm-v93/`。构建临时覆盖已恢复，官方 apps/system/aipetllm 恢复为构建前不存在的状态。
+
+尚未宣称双 token 实机运行或参考数值验证通过。
