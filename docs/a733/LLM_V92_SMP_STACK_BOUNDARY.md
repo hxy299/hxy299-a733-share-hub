@@ -45,3 +45,11 @@ Wi-Fi 双频扫描可见 2.4/5 GHz 网络，5 GHz WPA2/DHCP 成功，地址 192.
 此次测试支持栈边界修复有效，但日志只展示一次启动，不视为三次冷启动压力验证。LLM 持久线程池、cache-hit 数值一致性、切核及 unload 资源释放仍待测试，不能把基础通过扩大为所有 LLM 功能通过。
 
 此源码标记为 `a733-v92-basic-verified`，作为后续开发恢复点；v88 仍保留。
+
+## LLM 持久线程池基本验证通过
+
+随后用户实测首次加载 175.0800 秒、计算 0.6184 秒；第二次 cache-hit 不读模型，计算 0.6150 秒、整条命令 0.6320 秒。所有层 CRC 及最终 state=17a04f7d、logits=7fdfee67、argmax=6233 与此前一致。
+
+pool pid=14、mask=fc、workers=6、created=6 保持不变，matrices 从 141 增到 282。unload 后 model empty、mask=00、workers=0，协调服务 pid=14 保留。内存 used 从 36080 到驻留 1117597552，卸载后 342352，残留相对起点 306272 字节，尚不能视为泄漏全部解决，重复加载/卸载压力仍需验证。
+
+恢复标记：`a733-v92-llm-pool-basic-verified`。多 token KV cache 和生成仍待实现。
