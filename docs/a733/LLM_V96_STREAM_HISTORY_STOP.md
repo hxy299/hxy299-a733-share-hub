@@ -49,4 +49,15 @@ aipetllm stop
 
 ## 恢复与构建纪律
 
+## v96 构建与镜像存档
+
+- 最终内核源提交：`fd464f1`。首次构建因首 token 计时变量可能未初始化被 `-Werror` 拦截；显式初始化后重新编译通过，失败产物未用于镜像。
+- 日志与符号：`archives/llm-v96/build.log`（失败记录）、`build-final.log`、`package.log`、`verify.log`、`nuttx.elf`、`Image`、`System.map`。此目录是本地存档，不整体纳入源码 Git。
+- 独立镜像位于仓库上层：`openvela-a733-cubie-a7z-sd-llm-stream-v96-candidate.img`，大小 `2147483648` 字节；基于 v95 镜像仅替换启动内核。
+- 内核大小 `1734128` 字节，SHA256：`c3000c0c6087fcad150fb779d9cf080168b0331f08f153924711bb74b8354451`。
+- 镜像 SHA256：`506a2ab6e53a114b72fb6ae26602b59e8466a968a97b3860d05b8c116b5b57fa`。
+- ext4 检查、GPT 检查和内核回读哈希通过；继承的分区 4 尾部非 2048 扇区对齐提示仍存在，GPT 报告 No problems found。
+- 空闲栈边界 `0x423f6000` / `0x42406000` 均页对齐。构建结束官方工作区临时 `apps/system/aipetllm` 目录已恢复为不存在。
+- 候选标签：`a733-v96-stream-history-stop-candidate`；上层恢复包：`a733-v96-stream-history-stop-candidate.bundle`。主机 tokenizer/UTF-8 分片及重复 ID 解码测试通过；这不是板端推理验收。
+
 回退 bundle 为上层 `a733-v95-before-stream-session.bundle`，v95 已验证标签保持。实现只在代码仓库 overlay，构建前提交/bundle，官方环境只临时覆盖并由脚本恢复。新镜像独立命名，不覆盖任何回退版本。整卡烧录会覆盖后来放入 TF 的模型/密钥/配置，务必先备份。
