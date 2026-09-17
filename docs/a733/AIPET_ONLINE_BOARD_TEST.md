@@ -4,6 +4,14 @@
 
 此轮目标是官方 AI Agent 后台 + `aipet ask` 文本闭环。只有构建、符号、镜像回读校验通过后才生成候选镜像。USB 麦克风、UART4、屏幕和真实动作不在当前已验证范围。
 
+2026-09-17 ARM64 构建通过，内核 1,887,448 字节，SHA256：
+`868018554c8986f166ff873276c78911f559793237f579c76ad04096e9aa39c3`。
+已检查 `aipet_main`、`ai_agent_main`、`aipet_agent_attach` 符号和 ARM64 Image 魔数。
+配置保留 CONFIG_SMP_NCPUS=8，启用 CONFIG_EXAMPLES_AI_AGENT_VELA，禁用 Agent shell 工具。
+候选镜像名为 `openvela-a733-cubie-a7z-sd-online-agent-v98-candidate.img`，在比赛仓库的上一级目录；
+镜像生成校验日志 `a733-online-agent-v98-image.log` 与镜像同目录。
+完整烧录测试尚未进行，不代表已达到长期稳定、低延迟或完整语音桌宠验收。
+
 1. 烧录候选镜像前备份 TF 卡数据；烧录会覆盖模型、网络配置和 SSH/FTP 配置。
 2. 启动后先执行 `aipet`，确认命令存在；`aipet ask "你好"` 在 Agent 未启动时必须明确失败，不应崩溃。
 3. `wifi connect <SSID>` 联网，然后 `ifconfig`、ping 网关、DNS 测试。执行 `wifi time` / `ntpcstatus` 确认日期正确。
@@ -18,6 +26,16 @@
 更换根证书或私有配置后，在重启 Agent 前保存当前日志。此版本的官方线程退出同步尚待审查，不用反复 kill/启动冒充可靠服务管理。
 
 ## 开发检查中新发现的限制
+
+本轮编译错误与修复记录：
+
+- 固件禁用 C++ 异常，原桌宠和本地 LLM 接口含无条件 throw/catch：改为显式错误检查，异常恢复仅在启用异常的主机编译中保留。
+- ARM64 mallinfo 字段为 size_t，官方日志使用 `%d`：板级补丁改为 `%zu` 与显式类型转换。
+- 官方提醒回复和技能路径固定缓冲区过小：扩大到可容纳既定输入上限的大小，不关闭编译告警。
+- 官方技能摘要直接累加 snprintf 返回值（所需长度，不是实际写入长度），可能越界：按剩余容量检查，截断时停在终止字节位置。
+- 固件 libc++ 没有完整 regex/locale 链接实现：桌宠固定表情和动作标签改用有界轻量解析器，保留原始语法和动作白名单；主机异常开/关两种配置及 sanitizer 回归通过。
+- 官方‘正在处理’提示也会走 outbound：pet 渠道不发送该提示，避免桥接当作最终回复；后端失败用明确错误标记返回。
+- 官方默认启动 Wi-Fi 重连和无认证 WebSocket，不适合当前镜像：复用现有联网服务，等待网络就绪后启动推理，不重复关联，不默认监听 WebSocket。
 
 - 官方 `vela_tls` 原使用 VERIFY_OPTIONAL：板级补丁改为强 CA/主机名验证，缺少 CA 应失败。
 - 官方 Media 未启用时存在弱 stub，返回失败而非真实录音/播放；不能把成功链接误判为语音链路成功。
