@@ -28,9 +28,14 @@ files=(
 )
 patched_files=(
   nuttx/arch/arm64/include/arch.h
+  packages/ai_agent/src/agent_main.c
+  packages/ai_agent/CMakeLists.txt
+  packages/ai_agent/src/infra/vela_tls.c
+  packages/ai_agent/src/tools/tool_registry.c
 )
 staged_files=()
 aipet_saved=false
+pet_saved=false
 aipet_relative=apps/system/aipetllm
 aipet_official="$official/$aipet_relative"
 aipet_overlay="$overlay/$aipet_relative"
@@ -61,6 +66,13 @@ restore_official()
     rm -rf "$aipet_official"
     if [[ -d "$backup/$aipet_relative" ]]; then
       cp -a "$backup/$aipet_relative" "$aipet_official"
+    fi
+  fi
+
+  if [[ "$pet_saved" == true ]]; then
+    rm -rf "$official/apps/system/aipet"
+    if [[ -d "$backup/apps/system/aipet" ]]; then
+      cp -a "$backup/apps/system/aipet" "$official/apps/system/aipet"
     fi
   fi
 
@@ -96,6 +108,15 @@ aipet_saved=true
 
 rm -rf "$aipet_official"
 cp -a "$aipet_overlay" "$aipet_official"
+
+if [[ -d "$official/apps/system/aipet" ]]; then
+  cp -a "$official/apps/system/aipet" "$backup/apps/system/aipet"
+fi
+pet_saved=true
+rm -rf "$official/apps/system/aipet"
+cp -a "$overlay/apps/system/aipet" "$official/apps/system/aipet"
+patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
+  < "$team_dir/patches/ai-agent-a733-pet-channel.patch"
 
 cd "$official"
 export PATH="$official/prebuilts/build-tools/linux-x86_64/bin:$official/prebuilts/gcc/linux-x86_64/aarch64-none-elf/bin:$official/prebuilts/tools/linux-x86_64:$official/prebuilts/tools/cmake/bin:$official/prebuilts/tools/ninja:/usr/bin:/bin:${PATH:-}"

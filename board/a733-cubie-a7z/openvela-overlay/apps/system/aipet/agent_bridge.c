@@ -12,6 +12,7 @@
 /* Process lifetime storage: official unregister does not join in-flight taps. */
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static int attached, pending, ready, result;
+static int cancelled;
 static uint64_t sequence, started, deadline, finished;
 static char chat_id[64], response[PET_TEXT_MAX + 1];
 
@@ -73,6 +74,7 @@ int aipet_agent_submit(const char *text, uint32_t timeout_ms)
   strcpy(msg.channel, "pet");
   strcpy(msg.chat_id, chat_id);
   started = monotonic_ms();
+  cancelled = 0;
   deadline = started + timeout_ms;
   pending = 1;
   status = message_bus_push_inbound(&msg);
@@ -88,7 +90,8 @@ int aipet_agent_poll(char *reply, size_t capacity, uint64_t *elapsed_ms)
   pthread_mutex_lock(&lock);
   if (pending && monotonic_ms() >= deadline)
     { pending = 0; ready = 1; finished = monotonic_ms(); result = -ETIMEDOUT; }
-  if (!ready) { pthread_mutex_unlock(&lock); return -EAGAIN; }
+  if (!ready) { status = cancelled ? -ECANCELED : -EAGAIN;
+    pthread_mutex_unlock(&lock); return status; }
   status = result;
   if (!status && strlen(response) + 1 > capacity)
     { pthread_mutex_unlock(&lock); return -ENOSPC; }
@@ -105,6 +108,7 @@ void aipet_agent_cancel(void)
 {
   pthread_mutex_lock(&lock);
   pending = ready = 0;
+  cancelled = 1;
   chat_id[0] = response[0] = '\0';
   pthread_mutex_unlock(&lock);
   /* Discards presentation only; does not pretend to cancel the cloud request. */
