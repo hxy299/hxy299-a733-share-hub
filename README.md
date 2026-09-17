@@ -46,7 +46,8 @@ YOLOv8n 六输出和动态输入均已通过真机验证，而不是固定输出
 
 本地 LLM 最新合并开发说明和测试命令见 [v94 生成链路](docs/a733/LLM_V94_MERGED_GENERATION.md)。
 后续 attention 数值对照和单轮对话候选见 [v95 ChatML](docs/a733/LLM_V95_ATTENTION_AUDIT_CHAT.md)。
-合并开发候选 v96 加入流式输出、有限多轮历史和协作停止，说明及板端验收步骤见 [v96 合并开发](docs/a733/LLM_V96_STREAM_HISTORY_STOP.md)；新增功能尚未通过板端验收。
+合并开发 v96 加入流式输出、有限多轮历史和协作停止，原候选说明及板端验收步骤见 [v96 合并开发](docs/a733/LLM_V96_STREAM_HISTORY_STOP.md)。
+后续用户日志已验证 v96 中文流式回答与两轮记忆；运行中停止及 Ctrl+C 清理仍待验收/修复。正规 `llm` 应用入口及已知边界见 [v97 应用封装](docs/a733/LLM_V97_APP_FRONTEND.md)。
 
 ## 四、仓库结构
 

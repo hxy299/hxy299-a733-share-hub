@@ -37,3 +37,15 @@ llm unload
 - 下一阶段优先解决 NSH Ctrl+C 转协作停止及所有推理统一状态，再拆出稳定模型/session API、持久 KV 和交互聊天模式。不要为缩短命令名绕过资源所有权设计。
 
 主机命令映射单元测试为 `tools/test-llm-frontend.c`；完整交叉编译和板端测试需分别验收。正式比赛 manifest 的临时共享仓库配置恢复要求不变。
+
+## 构建与交付存档
+
+- 源码提交 `862aed2`，构建前保存 `a733-v97-app-config-before-build.bundle`。初次增量构建沿用旧配置未注册 llm，未用于交付；显式设置板级 `CONFIG_AIPETLLM_LLM_FRONTEND=y` 后完整重新构建通过。
+- `archives/llm-v97/test-frontend.log` 主机参数测试通过；`build-final.log` 为正式构建日志，`System.map` 包含 `aipetllm_dispatch`、`aipetllm_main`、`llm_main`，配置确认八核。日志、ELF 和内核均留在本地 archives，不整体加入 Git。
+- 空闲栈 `0x423f6000` / `0x42406000` 页对齐，构建结束官方环境临时应用目录已恢复为不存在。
+- 上层镜像 `openvela-a733-cubie-a7z-sd-llm-app-v97-candidate.img`，2147483648 字节，内核 1734128 字节。
+- 内核 SHA256：`dc825352735129627ced7350bba47a4748ff8d6fac2c1bf2efc6c29ea7f118da`。
+- 镜像 SHA256：`d9a143eba8d511cab26888ab980ccc66bd81823bbf3fa98a0df445ea4994ed82`。
+- 打包、ext4/GPT 检查、内核回读通过；继承的分区 4 尾部非 2048 扇区对齐提示仍保留，GPT 报告 No problems found。
+- 候选标签及上层恢复包：`a733-v97-llm-app-candidate` / `a733-v97-llm-app-candidate.bundle`。保留 `a733-v96-chat-history-basic-verified` 回退标签和 v96 镜像。
+- v97 未通过板端入口/启动验收。整卡烧录前备份后来上传的模型、密钥及配置，新镜像不包含这些用户数据。
