@@ -110,7 +110,10 @@
 +    syslog(LOG_INFO, "[%s] HTTP complete=%llu ms encoded-bytes=%zu\n", TAG,
 +        (unsigned long long)(pet_http_ms() - started), resp_pos);
      resp_buf[resp_pos] = '\0';
-@@ -648,1 +714,9 @@
+@@ -646,5 +714,13 @@
+     if (out_body_len)
+         *out_body_len = resp_pos;
+ 
      return http_status;
 +pet_read_failed:
 +    syslog(LOG_ERR, "[%s] HTTP incomplete/malformed/timeout after %llu ms\n",
@@ -120,3 +123,20 @@
 +    if (out_keep_alive) *out_keep_alive = false;
 +    tls_raw_release(raw);
 +    return VELA_TLS_ERR_READ;
+ }
+@@ -692,4 +768,8 @@
+         ret = tls_write_request(&slot->ctx, method, host, path, headers, body, body_len);
++        if (ret != 0) {
++            pool_release(slot, host, port, false);
++            return ret; /* Partial POST writes must not be replayed. */
++        }
+         if (ret == 0) {
+             bool keep = false;
+             ret = tls_read_response(&slot->ctx, resp_buf, resp_cap, out_body_len, &keep);
+@@ -698,4 +778,6 @@
+                 return ret;
+             }
++            pool_release(slot, host, port, false);
++            return ret; /* No silent paid-request retry after receiving failed. */
+         }
+         /* Connection went stale — fall through to reconnect */
