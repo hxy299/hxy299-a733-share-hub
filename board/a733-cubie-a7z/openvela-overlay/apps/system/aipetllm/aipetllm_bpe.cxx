@@ -672,7 +672,9 @@ bool bpe_word(const vocabulary &vocab, const std::string &raw,
 
 }
 
-extern "C" int aipetllm_bpe_checkpoint(const char *path, const char *prompt)
+static int encode_tokens(const char *path, const char *prompt,
+                          std::uint32_t *output, std::uint32_t capacity,
+                          std::uint32_t *count)
 {
   vocabulary vocab;
   std::vector<std::uint32_t> tokens;
@@ -702,6 +704,21 @@ extern "C" int aipetllm_bpe_checkpoint(const char *path, const char *prompt)
         {
           return 1;
         }
+
+      if (output != nullptr && tokens.size() > capacity)
+        {
+          std::fputs("aipetllm: prompt exceeds token capacity\n", stderr);
+          return 1;
+        }
+    }
+
+  if (output != nullptr)
+    {
+      *count = static_cast<std::uint32_t>(tokens.size());
+      for (std::size_t index = 0; index < tokens.size(); index++)
+        {
+          output[index] = tokens[index];
+        }
     }
 
   std::printf("qwen2-bpe path=%s vocab=%lu merges=%lu prompt-bytes=%lu "
@@ -720,6 +737,26 @@ extern "C" int aipetllm_bpe_checkpoint(const char *path, const char *prompt)
   std::puts("Qwen2 pre-tokenizer and byte-level BPE checkpoint passed; "
             "full Unicode category audit pending.");
   return 0;
+}
+
+extern "C" int aipetllm_encode_tokens(const char *path, const char *prompt,
+                                      std::uint32_t *output,
+                                      std::uint32_t capacity,
+                                      std::uint32_t *count)
+{
+  if (output == nullptr || count == nullptr || capacity == 0 ||
+      prompt == nullptr || std::strlen(prompt) > 4096)
+    {
+      return 1;
+    }
+
+  *count = 0;
+  return encode_tokens(path, prompt, output, capacity, count);
+}
+
+extern "C" int aipetllm_bpe_checkpoint(const char *path, const char *prompt)
+{
+  return encode_tokens(path, prompt, nullptr, 0, nullptr);
 }
 
 #ifdef AIPETLLM_BPE_STANDALONE

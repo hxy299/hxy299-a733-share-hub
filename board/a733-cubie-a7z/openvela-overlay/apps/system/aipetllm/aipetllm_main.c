@@ -15,6 +15,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "aipetllm_sequence.h"
 
 #define GGUF_MAGIC UINT32_C(0x46554747)
 #define GGUF_TYPE_UINT8 0
@@ -74,6 +75,8 @@ extern int aipetllm_tokenizer_checkpoint(const char *path);
 extern int aipetllm_decode_checkpoint(const char *path, int id_count,
                                       char *const id_text[]);
 extern int aipetllm_bpe_checkpoint(const char *path, const char *prompt);
+extern int aipetllm_encode_tokens(const char *, const char *, uint32_t *,
+                                  uint32_t, uint32_t *);
 
 static const char *file_type(mode_t mode)
 {
@@ -88,6 +91,114 @@ static const char *file_type(mode_t mode)
     }
 
   return "other";
+}
+
+/* Strict bounded decimal CSV: also used for core IDs, rejecting repeats there. */
+static int parse_id_list(const char *text, uint32_t *ids, size_t capacity,
+                         uint32_t *count)
+{
+  const char *cursor = text;
+  *count = 0;
+  for (;;)
+    {
+      char *end;
+      unsigned long value;
+      if (*count == capacity || *cursor < '0' || *cursor > '9')
+        {
+          return 1;
+        }
+
+      errno = 0;
+      value = strtoul(cursor, &end, 10);
+      if (errno == ERANGE || value > UINT32_MAX ||
+          (*end != ',' && *end != '\0'))
+        {
+          return 1;
+        }
+
+      ids[(*count)++] = (uint32_t)value;
+      if (*end == '\0')
+        {
+          return 0;
+        }
+
+      cursor = end + 1;
+    }
+}
+
+static int generate_ids(int argc, char *argv[])
+{
+  struct aipetllm_sequence_s sequence = {0};
+  uint32_t limit[1];
+  uint32_t count;
+  unsigned int mask = 0xfc;
+  char id_text[AIPETLLM_SEQUENCE_LIMIT][11];
+  char *id_pointer[AIPETLLM_SEQUENCE_LIMIT];
+  uint32_t index;
+  int result;
+
+  if (parse_id_list(argv[4], limit, 1, &count) ||
+      limit[0] > AIPETLLM_SEQUENCE_LIMIT)
+    {
+      fputs("generateids: prompt requires 1..64 IDs; count must be 0..64\n",
+            stderr);
+      return 1;
+    }
+
+  if (strcmp(argv[1], "generate") == 0)
+    {
+      result = aipetllm_encode_tokens(argv[2], argv[3], sequence.input,
+                                      AIPETLLM_SEQUENCE_LIMIT,
+                                      &sequence.input_count);
+    }
+  else
+    {
+      result = parse_id_list(argv[3], sequence.input, AIPETLLM_SEQUENCE_LIMIT,
+                              &sequence.input_count);
+    }
+
+  if (result != 0 || sequence.input_count == 0)
+    {
+      fputs("generate: invalid or overlong prompt\n", stderr);
+      return 1;
+    }
+
+  sequence.generate_limit = limit[0];
+  if (argc == 6)
+    {
+      uint32_t cores[8];
+      if (parse_id_list(argv[5], cores, 8, &count))
+        {
+          return 1;
+        }
+
+      mask = 0;
+      for (index = 0; index < count; index++)
+        {
+          if (cores[index] > 7 || (mask & (1u << cores[index])))
+            {
+              fputs("generateids: cores must be unique IDs 0..7\n", stderr);
+              return 1;
+            }
+
+          mask |= 1u << cores[index];
+        }
+    }
+
+  result = aipetllm_sequence_fast_checkpoint(argv[2], &sequence, mask);
+  if (result != 0 || sequence.output_count == 0)
+    {
+      return result;
+    }
+
+  for (index = 0; index < sequence.output_count; index++)
+    {
+      snprintf(id_text[index], sizeof(id_text[index]), "%" PRIu32,
+               sequence.output[index]);
+      id_pointer[index] = id_text[index];
+    }
+
+  return aipetllm_decode_checkpoint(argv[2], sequence.output_count, id_pointer);
 }
 
 static int path_check(const char *path)
@@ -630,6 +741,8 @@ static void usage(void)
   puts("  aipetllm forward1 model.gguf token-id");
   puts("  aipetllm forwardfast model.gguf token-id [cores: 2,3,4,5,6,7]");
   puts("  aipetllm forward2fast model.gguf token1 token2 [cores]");
+  puts("  aipetllm generateids model.gguf token1,token2 count[0..64] [cores]");
+  puts("  aipetllm generate model.gguf \"raw text\" count[0..64] [cores]");
   puts("  aipetllm cacheinfo | unload (persistent RAM model)");
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
@@ -807,6 +920,13 @@ int main(int argc, char **argv)
                     strcmp(argv[1], "unload") == 0))
     {
       return aipetllm_cache_control(strcmp(argv[1], "unload") == 0);
+    }
+
+  if ((argc == 5 || argc == 6) &&
+      (strcmp(argv[1], "generateids") == 0 ||
+       strcmp(argv[1], "generate") == 0))
+    {
+      return generate_ids(argc, argv);
     }
 
   if ((argc == 5 || argc == 6) && strcmp(argv[1], "forward2fast") == 0)

@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <unistd.h>
+#include "aipetllm_sequence.h"
 
 int aipetllm_cpu_checkpoint(void);
 int aipetllm_forward_ram_checkpoint(const char *path, uint32_t token_id,
@@ -23,7 +24,8 @@ int aipetllm_forward2_fast_checkpoint(const char *path, uint32_t first_token,
 
 static int forward_fast(const char *path, uint32_t token_id,
                         unsigned int cpu_mask, int two_tokens,
-                        uint32_t second_token)
+                        uint32_t second_token,
+                        struct aipetllm_sequence_s *sequence)
 {
   cpu_set_t original = 0;
   cpu_set_t selected = 0;
@@ -55,7 +57,8 @@ static int forward_fast(const char *path, uint32_t token_id,
   printf("forwardfast: cores-mask=%02x workers=%d; "
          "A76:A55 row weight=3:1; system scheduling unchanged\n",
          cpu_mask, count);
-  result = two_tokens ?
+  result = sequence != NULL ?
+    aipetllm_sequence_ram_checkpoint(path, sequence, cpu_mask) : two_tokens ?
     aipetllm_forward2_ram_checkpoint(path, token_id, second_token, cpu_mask) :
     aipetllm_forward_ram_checkpoint(path, token_id, cpu_mask);
 
@@ -71,14 +74,27 @@ static int forward_fast(const char *path, uint32_t token_id,
 int aipetllm_forward_fast_checkpoint(const char *path, uint32_t token_id,
                                     unsigned int cpu_mask)
 {
-  return forward_fast(path, token_id, cpu_mask, 0, 0);
+  return forward_fast(path, token_id, cpu_mask, 0, 0, NULL);
 }
 
 int aipetllm_forward2_fast_checkpoint(const char *path, uint32_t first_token,
                                      uint32_t second_token,
                                      unsigned int cpu_mask)
 {
-  return forward_fast(path, first_token, cpu_mask, 1, second_token);
+  return forward_fast(path, first_token, cpu_mask, 1, second_token, NULL);
+}
+
+int aipetllm_sequence_fast_checkpoint(const char *path,
+                                      struct aipetllm_sequence_s *sequence,
+                                      unsigned int cpu_mask)
+{
+  if (sequence == NULL || sequence->input_count == 0 ||
+      sequence->input_count > AIPETLLM_SEQUENCE_LIMIT)
+    {
+      return 1;
+    }
+
+  return forward_fast(path, sequence->input[0], cpu_mask, 0, 0, sequence);
 }
 
 /* Diagnostic only: move this task, read identity, run the same bounded integer

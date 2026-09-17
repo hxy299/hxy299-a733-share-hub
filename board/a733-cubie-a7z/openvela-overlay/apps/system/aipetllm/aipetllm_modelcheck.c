@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "ggml.h"
+#include "aipetllm_sequence.h"
 #define GGML_COMMON_DECL_C
 #include "ggml-common.h"
 #include "ggml-quants.h"
@@ -1455,7 +1456,8 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
                                      size_t model_bytes,
                                      int two_tokens, uint32_t second_token,
                                      uint32_t rotary_dimension,
-                                     float frequency_base)
+                                     float frequency_base,
+                                     struct aipetllm_sequence_s *sequence)
 {
   struct tensor_info_s *output_norm;
   struct tensor_info_s *output_weight;
@@ -1474,13 +1476,32 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
   float *key = NULL;
   float *keys = NULL;
   float *values = NULL;
+  double *scores = NULL;
+  float *probability = NULL;
   uint64_t hidden;
   uint64_t ffn_hidden = 0;
   uint64_t head_dimension;
   uint64_t index;
   uint32_t layer;
   uint32_t position;
+  uint32_t capacity = two_tokens ? 2 : 1;
+  uint32_t current_token = token_id;
+  uint32_t next_token = 0;
   int result = 1;
+
+  if (sequence != NULL)
+    {
+      if (sequence->input_count == 0 || sequence->input_count > 64 ||
+          sequence->generate_limit > 64)
+        {
+          return 1;
+        }
+
+      sequence->output_count = 0;
+      capacity = sequence->input_count +
+                 (sequence->generate_limit ? sequence->generate_limit - 1 : 0);
+      two_tokens = 1;
+    }
 
   if (embedding == NULL || embedding->dimension_count != 2 ||
       token_id >= embedding->dimensions[1] ||
@@ -1491,6 +1512,17 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
     {
       fputs("aipetllm: forward1 invalid model metadata\n", stderr);
       return 1;
+    }
+
+  if (sequence != NULL)
+    {
+      for (index = 0; index < sequence->input_count; index++)
+        {
+          if (sequence->input[index] >= embedding->dimensions[1])
+            {
+              return 1;
+            }
+        }
     }
 
   hidden = embedding->dimensions[0];
@@ -1524,9 +1556,12 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
       size_t kv_width = (size_t)head_count_kv * head_dimension;
       query = malloc((size_t)hidden * sizeof(float));
       key = malloc(kv_width * sizeof(float));
-      keys = calloc((size_t)block_count * 2 * kv_width, sizeof(float));
-      values = calloc((size_t)block_count * 2 * kv_width, sizeof(float));
-      if (query == NULL || key == NULL || keys == NULL || values == NULL)
+      keys = calloc((size_t)block_count * capacity * kv_width, sizeof(float));
+      values = calloc((size_t)block_count * capacity * kv_width, sizeof(float));
+      scores = malloc(capacity * sizeof(double));
+      probability = malloc(capacity * sizeof(float));
+      if (query == NULL || key == NULL || keys == NULL || values == NULL ||
+          scores == NULL || probability == NULL)
         {
           goto out;
         }
@@ -1537,11 +1572,15 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
         }
     }
 
-  for (position = 0; position < (two_tokens ? 2u : 1u); position++)
+  for (position = 0; position < capacity; position++)
     {
+      current_token = sequence != NULL ?
+        (position < sequence->input_count ? sequence->input[position] :
+                                           next_token) :
+        (position == 0 ? token_id : second_token);
       if (position != 0 &&
           read_dequantized_row(stream, data_start + embedding->offset,
-                              embedding, second_token, state) < 0)
+                              embedding, current_token, state) < 0)
         {
           goto out;
         }
@@ -1549,7 +1588,7 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
       if (two_tokens)
         {
           printf("forward2 position=%" PRIu32 " token=%" PRIu32 "\n",
-                 position, position == 0 ? token_id : second_token);
+                 position, current_token);
         }
 
   for (layer = 0; layer < block_count; layer++)
@@ -1680,9 +1719,9 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
               goto out;
             }
 
-          memcpy(keys + ((size_t)layer * 2 + position) * value_dimensions,
+          memcpy(keys + ((size_t)layer * capacity + position) * value_dimensions,
                  key, (size_t)value_dimensions * sizeof(float));
-          memcpy(values + ((size_t)layer * 2 + position) * value_dimensions,
+          memcpy(values + ((size_t)layer * capacity + position) * value_dimensions,
                  value, (size_t)value_dimensions * sizeof(float));
         }
 
@@ -1699,16 +1738,15 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
             }
           else
             {
-              double scores[2] = {0.0, 0.0};
-              float probability[2];
               float maximum;
               float total;
               uint32_t past;
               uint64_t component;
               for (past = 0; past <= position; past++)
                 {
-                  size_t base = ((size_t)layer * 2 + past) *
+                  size_t base = ((size_t)layer * capacity + past) *
                                 value_dimensions + source;
+                  scores[past] = 0.0;
                   for (component = 0; component < head_dimension; component++)
                     {
                       scores[past] += (double)query[destination + component] *
@@ -1718,17 +1756,35 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
                   scores[past] *= 1.0 / sqrt((double)head_dimension);
                 }
 
-              maximum = (float)fmax(scores[0], scores[1]);
-              probability[0] = expf((float)scores[0] - maximum);
-              probability[1] = expf((float)scores[1] - maximum);
-              total = probability[0] + probability[1];
+              maximum = (float)scores[0];
+              for (past = 1; past <= position; past++)
+                {
+                  maximum = fmaxf(maximum, (float)scores[past]);
+                }
+
+              total = 0.0f;
+              for (past = 0; past <= position; past++)
+                {
+                  probability[past] = expf((float)scores[past] - maximum);
+                  total += probability[past];
+                }
+
+              if (!isfinite(total) || total <= 0.0f)
+                {
+                  goto out;
+                }
               for (component = 0; component < head_dimension; component++)
                 {
-                  size_t base = (size_t)layer * 2 * value_dimensions +
+                  size_t base = (size_t)layer * capacity * value_dimensions +
                                 source + component;
-                  context[destination + component] =
-                    probability[0] / total * values[base] +
-                    probability[1] / total * values[base + value_dimensions];
+                  float sum = 0.0f;
+                  for (past = 0; past <= position; past++)
+                    {
+                      sum += probability[past] / total *
+                             values[base + (size_t)past * value_dimensions];
+                    }
+
+                  context[destination + component] = sum;
                 }
             }
         }
@@ -1837,6 +1893,10 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
 
     for (index = 1; index < output_weight->dimensions[1]; index++)
       {
+        if (!isfinite(logits[index]))
+          {
+            goto out;
+          }
         if (logits[index] > maximum_logit)
           {
             maximum_logit = logits[index];
@@ -1854,11 +1914,36 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
                         sizeof(float)),
            maximum_index, (double)maximum_logit,
            output_weight->dimensions[1]);
+    if (!isfinite(maximum_logit))
+      {
+        goto out;
+      }
+
+    next_token = (uint32_t)maximum_index;
+    if (sequence != NULL && sequence->generate_limit != 0 &&
+        position + 1 >= sequence->input_count)
+      {
+        sequence->output[sequence->output_count++] = next_token;
+        printf("generated[%" PRIu32 "]=%" PRIu32 "\n",
+               sequence->output_count - 1, next_token);
+      }
   }
+
+  if (sequence != NULL && sequence->output_count != 0 &&
+      next_token == sequence->eos)
+    {
+      break;
+    }
 
     }
 
-  if (two_tokens)
+  if (sequence != NULL)
+    {
+      printf("Qwen2 causal prefill/generation passed; prompt=%" PRIu32
+             " generated=%" PRIu32 "; KV session released on return\n",
+             sequence->input_count, sequence->output_count);
+    }
+  else if (two_tokens)
     {
       puts("Qwen2 28-layer two-token causal KV checkpoint passed; "
            "session persistence and generation pending.");
@@ -1871,6 +1956,8 @@ static int qwen2_forward1_checkpoint(FILE *stream, uint64_t data_start,
   result = 0;
 
 out:
+  free(probability);
+  free(scores);
   free(values);
   free(keys);
   free(key);
@@ -1889,11 +1976,12 @@ out:
   return result;
 }
 
-static int embedding_pipeline_checkpoint(const char *path,
+static int embedding_pipeline_run(const char *path,
                                          uint32_t token_id,
                                          int projection_mode,
                                          uint32_t position,
-                                         uint32_t second_token_id)
+                                         uint32_t second_token_id,
+                                         struct aipetllm_sequence_s *sequence)
 {
   unsigned int cpu_mask = (unsigned int)projection_mode >> 8;
   struct tensor_info_s *embedding = NULL;
@@ -1962,7 +2050,7 @@ static int embedding_pipeline_checkpoint(const char *path,
   int ret = 1;
 
   projection_mode &= 255;
-  if (projection_mode == 7 || projection_mode == 8)
+  if (projection_mode >= 7)
     {
       if (strlen(path) >= sizeof(g_model_path) ||
           pthread_mutex_trylock(&g_model_lock) != 0)
@@ -2002,7 +2090,7 @@ static int embedding_pipeline_checkpoint(const char *path,
       goto out;
     }
 
-  if ((projection_mode == 7 || projection_mode == 8) && !cache_hit)
+  if (projection_mode >= 7 && !cache_hit)
     {
       struct stat model_stat;
       size_t loaded = 0;
@@ -2090,6 +2178,15 @@ static int embedding_pipeline_checkpoint(const char *path,
           type == GGUF_TYPE_UINT32)
         {
           if (read_exact(stream, &alignment, sizeof(alignment)) < 0)
+            {
+              goto out;
+            }
+        }
+      else if (sequence != NULL &&
+               strcmp(key, "tokenizer.ggml.eos_token_id") == 0 &&
+               type == GGUF_TYPE_UINT32)
+        {
+          if (read_exact(stream, &sequence->eos, sizeof(sequence->eos)) < 0)
             {
               goto out;
             }
@@ -2266,7 +2363,7 @@ static int embedding_pipeline_checkpoint(const char *path,
                  ~(uint64_t)(alignment - 1);
   }
 
-  if (projection_mode == 6 || projection_mode == 7 || projection_mode == 8)
+  if (projection_mode >= 6)
     {
       ret = qwen2_forward1_checkpoint(stream, data_start, tensors,
                                       tensor_count, embedding, token_id,
@@ -2274,7 +2371,8 @@ static int embedding_pipeline_checkpoint(const char *path,
                                       head_count_kv, epsilon, cpu_mask,
                                       model_memory, model_length,
                                       projection_mode == 8, second_token_id,
-                                      rotary_dimension, frequency_base);
+                                      rotary_dimension, frequency_base,
+                                      sequence);
       goto out;
     }
 
@@ -2983,15 +3081,17 @@ out:
       fclose(stream);
     }
 
-  if ((projection_mode == 7 || projection_mode == 8) && model_memory != NULL)
+  if (projection_mode >= 7 && model_memory != NULL)
     {
       if (ret == 0)
         {
           clock_gettime(CLOCK_MONOTONIC, &finished);
           printf("forwardfast: compute=%.4f sec; causal forward checkpoint; "
-                 "model resident; multi-token generation pending\n",
+                 "model resident; %s\n",
                  (double)(finished.tv_sec - compute_start.tv_sec) +
-                 (double)(finished.tv_nsec - compute_start.tv_nsec) / 1.0e9);
+                 (double)(finished.tv_nsec - compute_start.tv_nsec) / 1.0e9,
+                 sequence != NULL ? "bounded generation finished" :
+                                    "generation available via generateids");
         }
 
       if (!cache_hit)
@@ -3017,6 +3117,29 @@ out:
     }
 
   return ret;
+}
+
+static int embedding_pipeline_checkpoint(const char *path, uint32_t token_id,
+                                          int mode, uint32_t position,
+                                          uint32_t second_token)
+{
+  return embedding_pipeline_run(path, token_id, mode, position, second_token,
+                                NULL);
+}
+
+int aipetllm_sequence_ram_checkpoint(const char *path,
+                                    struct aipetllm_sequence_s *sequence,
+                                    unsigned int mask)
+{
+  if (sequence == NULL || sequence->input_count == 0 ||
+      sequence->input_count > 64 || sequence->generate_limit > 64)
+    {
+      return 1;
+    }
+
+  sequence->eos = UINT32_MAX;
+  return embedding_pipeline_run(path, sequence->input[0],
+                                9 | (int)(mask << 8), 0, 0, sequence);
 }
 
 int aipetllm_embedding_checkpoint(const char *path, uint32_t token_id)
