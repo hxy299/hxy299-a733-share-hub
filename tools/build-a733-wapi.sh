@@ -120,6 +120,8 @@ rm -rf "$official/apps/system/aipet"
 cp -a "$overlay/apps/system/aipet" "$official/apps/system/aipet"
 patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
   < "$team_dir/patches/ai-agent-a733-pet-channel.patch"
+patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
+  < "$team_dir/patches/ai-agent-http-completion.patch"
 
 cd "$official"
 export PATH="$official/prebuilts/build-tools/linux-x86_64/bin:$official/prebuilts/gcc/linux-x86_64/aarch64-none-elf/bin:$official/prebuilts/tools/linux-x86_64:$official/prebuilts/tools/cmake/bin:$official/prebuilts/tools/ninja:/usr/bin:/bin:${PATH:-}"

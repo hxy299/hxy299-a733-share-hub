@@ -16,7 +16,7 @@ extern "C" int aipet_main(int argc, char **argv)
                   "Online text integration; microphone/UART output pending.\n");
       return 1;
     }
-  int status = aipet_agent_submit(argv[2], 30000);
+  int status = aipet_agent_submit(argv[2], 90000);
   if (status)
     { std::printf("aipet: submit failed %d\n", status); return 1; }
   char raw[4097];
