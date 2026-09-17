@@ -53,3 +53,25 @@ v94 源码回退 bundle：上层目录 `a733-v94-before-attention-audit-chat.bun
 - `g_cpu_idlestackalloc=423f5000`、`g_idle_topstack=42405000`，页对齐保持。
 
 当前没有 v95 板端日志，不宣称双位置数值差异已修复，也不宣称 ChatML 的回答效果已通过。数值和对话回归是烧录后的首要任务。
+
+## 实机数值回归及单轮聊天基本验证通过
+
+后续用户日志：`C:/Users/Lenovo/.codex/attachments/2d6e38c6-2ca9-4798-9cf8-108eb13141b0/pasted-text.txt`，更新上述候选状态。正常进入 NSH，两个命令均正常返回。
+
+### 双 token 数值兼容
+
+forward2fast 输入 9707,1879，加载 175.1461 秒，计算 1.4615 秒（含每层 audit 打印）。第一位置仍为 final-state=17a04f7d、logits=7fdfee67、argmax=6233。第二位置 28 层 CRC 与 v93 日志逐项比较完全一致，final-state=d2ec6d95、logits=96794b9a、argmax=4894、logit=16.4877815。
+
+audit 同组数据上，泛化累加与显式两项表达式每层有 388–549 个 context 分量位模式不同，maxabs 范围 5.96046448e-08–4.76837158e-07；选用显式表达式恢复旧基线。证据已确认这条浮点求值路径的变化足以造成当前双 token 回归差异；没有证据指向此次 KV 数据损坏。尚未独立确认具体是 FMA 融合、指令顺序或其他编译求值机制，也不把 CRC 恢复等同于独立模型精度验证。更长历史仍走泛化路径，需要参考容差核对。
+
+### ChatML 回答和结束
+
+`chat MODEL "Hello" 16` 使用 20 个输入 token，命中模型 RAM 缓存，6 workers、mask=fc。生成正文 token 为 9707,0,2585,646,358,1492,498,3351,30，共 9 枚；下一预测为 im_end=151645，报告 generation-stop，未把控制标记解码为正文。最终输出 32 字节：`Hello! How can I help you today?`，正常返回 NSH。
+
+计算 10.5269 秒，包含 20 个提示位置、后续反馈、结束预测及诊断输出；不能用该数字作为稳态解码 token/s。共处理 29 个位置，平均每位置约 0.363 秒，也只是本次整体计算观测。文本 BPE 和最终解码不包含在该计算计时内。解码助手末尾的 `Transformer inference pending` 是沿用早期独立 decode 诊断的过时提示，不代表这次生成未执行；后续应清理该提示。
+
+### 尚待验证
+
+此轮没有 generateids 不同容量/重复命令、cacheinfo、卸载后 workers/内存、中文或多轮测试。现阶段确认单次双 token 兼容和单次英文单轮聊天；独立 Linux/llama.cpp 参考、更长历史容差、重复压力、中文 tokenizer、长回答、Ctrl+C 安全取消、多轮会话和散热/频率测量仍待完成。
+
+源码及此记录以 `a733-v95-chat-basic-verified` 标签和上层 `a733-v95-chat-basic-verified.bundle` 保存。保留原 v95 candidate 镜像名称与哈希，不覆盖回退镜像。
