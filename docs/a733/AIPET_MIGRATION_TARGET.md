@@ -1,5 +1,11 @@
 # 桌宠新移植目标与备用接口
 
+## 当前工作切换
+
+按用户最新要求，暂时暂停桌宠 UART 移植，优先开发独立本地流式 ASR 模块。
+模块与验收清单见 `board/a733-cubie-a7z/openvela-overlay/apps/system/aipetasr/README.md`。
+原 UART-first 与后续 I2S 计划保留，不在此次切换中删除或启用 I2S。
+
 ## 当前主目标：UART4 版本
 
 先跑通 Linux vision-4 的功能，不以引入框架为理由改变产品行为。

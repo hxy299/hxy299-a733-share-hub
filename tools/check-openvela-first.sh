@@ -8,6 +8,7 @@ overlay_apps="$team_dir/board/a733-cubie-a7z/openvela-overlay/apps"
 product_roots=(
   "$overlay_apps/system/aipetllm"
   "$overlay_apps/system/aipet"
+  "$overlay_apps/system/aipetasr"
   "$overlay_apps/ai"
 )
 
