@@ -23,7 +23,9 @@ extern "C" int aipetllm_infer(const aipetllm_request *request,
       !request->max_tokens || request->max_tokens > 64) return 1;
   void *stream = nullptr;
   int result = 1;
+#if defined(__cpp_exceptions)
   try
+#endif
     {
       aipetllm_sequence_s sequence{};
       sequence.generate_limit = request->max_tokens;
@@ -42,7 +44,9 @@ extern "C" int aipetllm_infer(const aipetllm_request *request,
         *metrics = {sequence.input_count, sequence.output_count,
                     sequence.first_token_seconds, sequence.after_first_seconds};
     }
+#if defined(__cpp_exceptions)
   catch (const std::exception &) { result = 1; }
+#endif
   aipetllm_stream_close(stream);
   return result;
 }

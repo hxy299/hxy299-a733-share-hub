@@ -23,8 +23,10 @@ bool whitespace(unsigned int cp)
 }
 
 /* Python str.strip / re.sub(r'\s+', ' ', ...) over valid UTF-8. */
-std::string normalized(const std::string &text, bool collapse)
+std::string normalized(const std::string &text, bool collapse, bool *valid = nullptr)
 {
+  if (valid) *valid = true;
+  auto invalid = [&]() { if (valid) *valid = false; return std::string{}; };
   std::string out;
   std::string pending;
   for (std::size_t i = 0; i < text.size();)
@@ -41,16 +43,16 @@ std::string normalized(const std::string &text, bool collapse)
       else if (byte >= 0xf0 && byte <= 0xf4)
         { cp = byte & 7; continuation = 3; minimum = 0x10000; }
       else if (byte >= 0x80)
-        throw std::invalid_argument("invalid UTF-8");
+        return invalid();
       for (unsigned int j = 0; j < continuation; j++)
         {
           if (i == text.size() ||
               (static_cast<unsigned char>(text[i]) & 0xc0) != 0x80)
-            throw std::invalid_argument("invalid UTF-8");
+            return invalid();
           cp = (cp << 6) | (static_cast<unsigned char>(text[i++]) & 63);
         }
       if (cp < minimum || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff))
-        throw std::invalid_argument("invalid UTF-8");
+        return invalid();
       if (whitespace(cp))
         {
           if (!out.empty())
@@ -81,9 +83,13 @@ bool parse_reply(const std::string &raw, Reply &out)
 {
   out = Reply{};
   if (raw.size() > 4096 || raw.find('\0') != std::string::npos) return false;
+#if defined(__cpp_exceptions)
   try
+#endif
     {
-      normalized(raw, false);  /* Validate before exposing an action. */
+      bool valid;
+      normalized(raw, false, &valid);  /* Validate before exposing an action. */
+      if (!valid) return false;
       static const std::regex action(R"(\[ACTION:([a-z_.]+\([^)]*\))\])");
       static const std::regex emotion("\\[(开心|难过|惊讶|生气|思考|安慰|普通|疑惑|困惑|好奇|兴奋|得意|害羞|害怕|期待|无语|鄙视|委屈|调皮|赞)\\]");
       Reply candidate;
@@ -109,10 +115,12 @@ bool parse_reply(const std::string &raw, Reply &out)
       out = std::move(candidate);
       return true;
     }
+#if defined(__cpp_exceptions)
   catch (const std::exception &)
     {
       return false;
     }
+#endif
 }
 
 bool SentenceStream::feed(const std::string &chunk, std::vector<Reply> &ready)
@@ -186,11 +194,22 @@ Turn Conversation::run(const std::string &user)
   if (state_ != State::idle) return turn;
   state_ = State::routing;
   trace_phase("routing", 0);
+  auto failure = [&]() {
+    state_ = State::error;
+    turn.ok = false;
+    ports_.return_idle();
+    state_ = State::idle;
+    return turn;
+  };
+#if defined(__cpp_exceptions)
   try
+#endif
     {
       if (user.size() > 4096 || user.find('\0') != std::string::npos)
-        throw std::invalid_argument("input limit");
-      std::string text = normalized(user, false);
+        return failure();
+      bool valid;
+      std::string text = normalized(user, false, &valid);
+      if (!valid) return failure();
       for (char &c : text)
         if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 'a' - 'A');
       std::string raw;
@@ -230,15 +249,16 @@ Turn Conversation::run(const std::string &user)
                 }
             }
           else ok = ports_.local_reply(user, raw);
-          if (!ok) throw std::runtime_error("backend unavailable");
+          if (!ok) return failure();
         }
-      if (!parse_reply(raw, turn.reply)) throw std::runtime_error("reply rejected");
+      if (!parse_reply(raw, turn.reply)) return failure();
       state_ = State::presenting;
       trace_phase("presenting", 0);
       turn.ok = ports_.present(turn.reply);
       if (turn.ok) completed_++;
       ports_.return_idle();
     }
+#if defined(__cpp_exceptions)
   catch (const std::exception &)
     {
       state_ = State::error;
@@ -246,6 +266,7 @@ Turn Conversation::run(const std::string &user)
       /* Real adapters must provide a nonthrowing cleanup operation. */
       try { ports_.return_idle(); } catch (...) {}
     }
+#endif
   state_ = State::idle;
   return turn;
 }
