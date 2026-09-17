@@ -13,10 +13,26 @@ struct Reply
   std::vector<std::string> actions;
 };
 
-/* Matches goal/src/action_parser.py followed by emotion_parser.py.
+/* Matches vision-4/src/action_parser.py followed by emotion_parser.py.
  * Complete replies only: never execute tags while generation is incomplete.
  * Malformed tags stay visible, as in the Linux implementation. */
 bool parse_reply(const std::string &raw, Reply &out);
+
+/* Single-owner incremental output. Tags following punctuation belong to that
+ * sentence. No incomplete tag may reach an actuator. Cancel drops pending text.
+ * A caller must stop feeding after any false return. */
+class SentenceStream
+{
+public:
+  bool feed(const std::string &chunk, std::vector<Reply> &ready);
+  bool finish(std::vector<Reply> &ready);
+  void cancel() { pending_.clear(); failed_ = true; }
+private:
+  bool drain(bool final, std::vector<Reply> &ready);
+  std::string pending_;
+  std::size_t bytes_ = 0;
+  bool failed_ = false;
+};
 
 struct Rule
 {

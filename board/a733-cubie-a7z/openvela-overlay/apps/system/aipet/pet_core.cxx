@@ -84,7 +84,7 @@ bool parse_reply(const std::string &raw, Reply &out)
     {
       normalized(raw, false);  /* Validate before exposing an action. */
       static const std::regex action(R"(\[ACTION:([a-z_.]+\([^)]*\))\])");
-      static const std::regex emotion("\\[(开心|难过|惊讶|生气|思考|安慰|普通)\\]");
+      static const std::regex emotion("\\[(开心|难过|惊讶|生气|思考|安慰|普通|疑惑|困惑|好奇|兴奋|得意|害羞|害怕|期待|无语|鄙视|委屈|调皮|赞)\\]");
       Reply candidate;
       for (std::sregex_iterator it(raw.begin(), raw.end(), action), end;
            it != end; ++it)
@@ -112,6 +112,71 @@ bool parse_reply(const std::string &raw, Reply &out)
     {
       return false;
     }
+}
+
+bool SentenceStream::feed(const std::string &chunk, std::vector<Reply> &ready)
+{
+  if (failed_ || chunk.size() > 4096 - bytes_ ||
+      chunk.find('\0') != std::string::npos)
+    { failed_ = true; return false; }
+  bytes_ += chunk.size();
+  pending_ += chunk;
+  return drain(false, ready);
+}
+
+bool SentenceStream::finish(std::vector<Reply> &ready)
+{
+  if (failed_) return false;
+  const bool result = drain(true, ready);
+  failed_ = true; /* Finish is terminal. */
+  return result;
+}
+
+bool SentenceStream::drain(bool final, std::vector<Reply> &ready)
+{
+  const char *endings[] = {"。", "！", "？", "；", "!", "?", ";", "\n"};
+  while (!pending_.empty())
+    {
+      std::size_t end = std::string::npos;
+      bool tag = false;
+      for (std::size_t i = 0; i < pending_.size(); ++i)
+        {
+          if (pending_[i] == '[') tag = true;
+          if (pending_[i] == ']') { tag = false; continue; }
+          if (tag) continue;
+          for (const char *mark : endings)
+            if (pending_.compare(i, std::char_traits<char>::length(mark), mark) == 0)
+              { end = i + std::char_traits<char>::length(mark); break; }
+          if (end != std::string::npos) break;
+        }
+      if (end == std::string::npos)
+        {
+          if (!final) return true;
+          if (tag) { failed_ = true; return false; }
+          end = pending_.size();
+        }
+      else
+        {
+          /* Hold at the chunk boundary: the next bytes may be a trailing tag. */
+          while (end < pending_.size())
+            {
+              if (pending_[end] == ' ' || pending_[end] == '\r' || pending_[end] == '\n')
+                { ++end; continue; }
+              if (pending_[end] != '[') break;
+              const auto close = pending_.find(']', end);
+              if (close == std::string::npos)
+                { if (!final) return true; failed_ = true; return false; }
+              end = close + 1;
+            }
+          if (end == pending_.size() && !final) return true;
+        }
+      Reply reply;
+      if (!parse_reply(pending_.substr(0, end), reply))
+        { failed_ = true; return false; }
+      ready.push_back(std::move(reply));
+      pending_.erase(0, end);
+    }
+  return true;
 }
 
 Turn Conversation::run(const std::string &user)

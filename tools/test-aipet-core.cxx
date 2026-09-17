@@ -51,6 +51,31 @@ int main(int argc, char **argv)
       return 0;
     }
   aipet::Reply parsed;
+  const char *extra[] = {"疑惑", "困惑", "好奇", "兴奋", "得意", "害羞", "害怕", "期待", "无语", "鄙视", "委屈", "调皮", "赞"};
+  for (const char *emotion : extra)
+    {
+      assert(aipet::parse_reply(std::string("你好[") + emotion + "]", parsed));
+      assert(parsed.text == "你好" && parsed.emotion == emotion);
+    }
+  const std::string streamed = "好的！[ACTION:servo.nod()][期待]下一句。";
+  for (std::size_t split = 0; split <= streamed.size(); ++split)
+    {
+      aipet::SentenceStream stream;
+      std::vector<aipet::Reply> ready;
+      assert(stream.feed(streamed.substr(0, split), ready));
+      assert(stream.feed(streamed.substr(split), ready));
+      assert(stream.finish(ready));
+      assert(ready.size() == 2 && ready[0].text == "好的！");
+      assert(ready[0].emotion == "期待" && ready[0].actions.size() == 1);
+      assert(ready[1].text == "下一句。");
+    }
+  {
+    aipet::SentenceStream stream;
+    std::vector<aipet::Reply> ready;
+    assert(stream.feed("好的！[ACTION:servo.", ready) && ready.empty());
+    stream.cancel();
+    assert(!stream.finish(ready) && ready.empty());
+  }
   assert(aipet::parse_reply("好的！[ACTION:motor.forward(2)][开心]", parsed));
   assert(parsed.text == "好的！" && parsed.emotion == "开心" && parsed.actions.size() == 1);
   assert(!aipet::parse_reply(std::string(4097, 'x'), parsed) && parsed.actions.empty());
