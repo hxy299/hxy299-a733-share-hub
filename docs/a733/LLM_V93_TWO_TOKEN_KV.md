@@ -44,3 +44,15 @@ free
 - 对应 ELF/Image/System.map 和日志保存在 `archives/llm-v93/`。构建临时覆盖已恢复，官方 apps/system/aipetllm 恢复为构建前不存在的状态。
 
 尚未宣称双 token 实机运行或参考数值验证通过。
+
+## 板端基本验证通过
+
+用户提供日志来源：`C:/Users/Lenovo/.codex/attachments/58f765a0-905c-4bb2-9d07-f417d77cd57a/pasted-text.txt`。
+
+正常进入 NSH，无异常 F0。序列 9707,1879 连续执行两次，两个位置全部 28 层 CRC 均重复一致。position=0 复现 v92：final-state=17a04f7d、logits=7fdfee67、argmax=6233。position=1：final-state=d2ec6d95、logits=96794b9a、argmax=4894、最大 logit=16.4877815。
+
+首次模型加载 175.0683 秒、计算 1.0956 秒。第二次 cache-hit 无模型 SD 读取，计算 1.0915 秒、整条命令 1.1087 秒。此为两个输入位置的 checkpoint 耗时，不是连续生成速度。
+
+pool pid=14、mask=fc、workers=6、created=6 不变，矩阵计数 394→788，符合每次 394 的预期。unload 报成功，随后 used=276800、nused=105；该日志没有卸载后的 cacheinfo，尚未独立确认此轮 workers=0，也没有多轮压力数据。
+
+记录为 `a733-v93-two-token-basic-verified`，保留源码 bundle。已确认实机运行及重复性；Linux/llama.cpp 独立数值参考、任意长度 KV 会话、prefill/连续生成仍未完成。不得将这一标签理解为完整聊天或参考精度验证通过。
