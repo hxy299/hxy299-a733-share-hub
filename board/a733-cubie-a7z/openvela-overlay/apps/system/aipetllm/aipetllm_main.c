@@ -847,7 +847,7 @@ static void usage(void)
   puts("Target: Qwen2.5-1.5B-Instruct Q4_K_M, CPU/ARM64 first.");
 }
 
-int main(int argc, char **argv)
+int aipetllm_dispatch(int argc, char **argv)
 {
   if (argc == 2 && (strcmp(argv[1], "stop") == 0 ||
                     strcmp(argv[1], "runstatus") == 0))
@@ -1182,4 +1182,9 @@ int main(int argc, char **argv)
 
   usage();
   return argc == 1 ? 0 : 1;
+}
+
+int main(int argc, char **argv)
+{
+  return aipetllm_dispatch(argc, argv);
 }

@@ -33,4 +33,12 @@ if(CONFIG_SYSTEM_AIPETLLM)
     apps_aipetllm
     PRIVATE third_party/ggml/include third_party/ggml/src
             third_party/ggml/src/ggml-cpu)
+
+  if(CONFIG_AIPETLLM_LLM_FRONTEND)
+    nuttx_add_application(
+      NAME llm
+      SRCS llm_main.c
+      STACKSIZE ${CONFIG_AIPETLLM_STACKSIZE}
+      PRIORITY ${CONFIG_AIPETLLM_PRIORITY})
+  endif()
 endif()
