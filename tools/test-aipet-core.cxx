@@ -78,6 +78,12 @@ int main(int argc, char **argv)
   }
   assert(aipet::parse_reply("好的！[ACTION:motor.forward(2)][开心]", parsed));
   assert(parsed.text == "好的！" && parsed.emotion == "开心" && parsed.actions.size() == 1);
+  assert(aipet::parse_reply("[赞]a[开心][ACTION:unknown.call(x)]b", parsed));
+  assert(parsed.text == "ab" && parsed.emotion == "赞" && parsed.actions.empty());
+  assert(aipet::parse_reply("[ACTION:Servo.nod()][ACTION:servo.nod(]", parsed));
+  assert(parsed.text == "[ACTION:Servo.nod()][ACTION:servo.nod(]" && parsed.actions.empty());
+  assert(aipet::parse_reply("a[ACTION:servo.nod(x\ny)]b", parsed));
+  assert(parsed.text == "ab" && parsed.actions.size() == 1);
   assert(!aipet::parse_reply(std::string(4097, 'x'), parsed) && parsed.actions.empty());
   assert(!aipet::parse_reply(std::string("\xe4\xbd", 2), parsed));
   std::string many;
