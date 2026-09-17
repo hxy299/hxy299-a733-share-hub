@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "pet_core.hxx"
 #include "pet_debug.hxx"
-#include <regex>
 #include <stdexcept>
 
 namespace aipet
@@ -90,28 +89,61 @@ bool parse_reply(const std::string &raw, Reply &out)
       bool valid;
       normalized(raw, false, &valid);  /* Validate before exposing an action. */
       if (!valid) return false;
-      static const std::regex action(R"(\[ACTION:([a-z_.]+\([^)]*\))\])");
-      static const std::regex emotion("\\[(开心|难过|惊讶|生气|思考|安慰|普通|疑惑|困惑|好奇|兴奋|得意|害羞|害怕|期待|无语|鄙视|委屈|调皮|赞)\\]");
+      const char *emotions[] = {"开心", "难过", "惊讶", "生气", "思考",
+        "安慰", "普通", "疑惑", "困惑", "好奇", "兴奋", "得意", "害羞",
+        "害怕", "期待", "无语", "鄙视", "委屈", "调皮", "赞"};
       Reply candidate;
-      for (std::sregex_iterator it(raw.begin(), raw.end(), action), end;
-           it != end; ++it)
+      std::string stripped;
+      for (std::size_t i = 0; i < raw.size();)
         {
-          const std::string call = (*it)[1].str();
-          const std::string method = call.substr(0, call.find('('));
-          for (const char *name : allowed)
-            if (method == name)
-              {
-                if (candidate.actions.size() == 32 || call.size() > 160)
-                  return false;  /* No partial action batch. */
-                candidate.actions.push_back(call);
-                break;
-              }
+          if (raw.compare(i, 8, "[ACTION:") == 0)
+            {
+              const auto begin = i + 8;
+              auto p = begin;
+              while (p < raw.size() && ((raw[p] >= 'a' && raw[p] <= 'z') ||
+                     raw[p] == '_' || raw[p] == '.')) ++p;
+              const auto close = raw.find(')', p);
+              if (p > begin && p < raw.size() && raw[p] == '(' &&
+                  close != std::string::npos && close + 1 < raw.size() &&
+                  raw[close + 1] == ']')
+                {
+                  const std::string call = raw.substr(begin, close + 1 - begin);
+                  const std::string method = raw.substr(begin, p - begin);
+                  for (const char *name : allowed)
+                    if (method == name)
+                      {
+                        if (candidate.actions.size() == 32 || call.size() > 160)
+                          return false;
+                        candidate.actions.push_back(call);
+                        break;
+                      }
+                  i = close + 2;
+                  continue;
+                }
+            }
+          stripped += raw[i++];
         }
-      const std::string action_clean = normalized(std::regex_replace(raw, action, ""), true);
-      std::smatch found;
-      if (std::regex_search(action_clean, found, emotion))
-        candidate.emotion = found[1].str(); /* First in text, not list order. */
-      candidate.text = normalized(std::regex_replace(action_clean, emotion, ""), true);
+      const std::string action_clean = normalized(stripped, true);
+      stripped.clear();
+      bool first = true;
+      for (std::size_t i = 0; i < action_clean.size();)
+        {
+          bool consumed = false;
+          if (action_clean[i] == '[')
+            for (const char *name : emotions)
+              {
+                const std::string tag = std::string("[") + name + "]";
+                if (action_clean.compare(i, tag.size(), tag) == 0)
+                  {
+                    if (first) { candidate.emotion = name; first = false; }
+                    i += tag.size();
+                    consumed = true;
+                    break;
+                  }
+              }
+          if (!consumed) stripped += action_clean[i++];
+        }
+      candidate.text = normalized(stripped, true);
       out = std::move(candidate);
       return true;
     }
