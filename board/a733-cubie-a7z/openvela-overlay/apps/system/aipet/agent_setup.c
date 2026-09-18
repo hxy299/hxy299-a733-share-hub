@@ -57,8 +57,11 @@ static int line(const char *prompt, char *out, size_t cap, int secret)
       if (used) { --used; if (!secret) { fputs("\b \b",stdout); fflush(stdout); } }
       continue;
     }
-    if (ch<32 || ch==127) { result=-EINVAL; break; }
-    if (used+1>=cap) { result=-EMSGSIZE; break; }
+    /* Drain rejected input through newline even on the polling UART, whose
+     * tcflush support is limited. Never leave a key suffix as an NSH command. */
+    if (result) continue;
+    if (ch<32 || ch==127) { result=-EINVAL; continue; }
+    if (used+1>=cap) { result=-EMSGSIZE; continue; }
     out[used++]=(char)ch;
     if (!secret) { putchar(ch); fflush(stdout); }
   }
