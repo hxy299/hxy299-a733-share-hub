@@ -913,12 +913,27 @@ static int xhci2_halt_reset(uintptr_t opbase)
 
   if (timeout == 1000)
     {
+      syslog(LOG_ERR, "A733 USB host: halt timeout cmd=%08lx sts=%08lx\n",
+             (unsigned long)getreg32(command),
+             (unsigned long)getreg32(status));
+      return -ETIMEDOUT;
+    }
+
+  /* HCRST must not be issued while the controller is not ready. */
+
+  if (wait_clear(status, XHCI_STS_CNR, 1000) < 0)
+    {
+      syslog(LOG_ERR, "A733 USB host: pre-reset CNR timeout\n");
       return -ETIMEDOUT;
     }
 
   a733_uvc_modifyreg32(command, 0, XHCI_CMD_RESET);
   if (wait_clear(command, XHCI_CMD_RESET, 1000) < 0)
     {
+      syslog(LOG_ERR, "A733 USB host: HCRST timeout cmd=%08lx sts=%08lx id=%08lx\n",
+             (unsigned long)getreg32(command),
+             (unsigned long)getreg32(status),
+             (unsigned long)getreg32(DWC3_GSNPSID));
       return -ETIMEDOUT;
     }
 
@@ -953,6 +968,9 @@ static int xhci2_checkpoint(void)
   g_uvc.hcsparams = getreg32(XHCI2_BASE + 4);
   g_uvc.max_ports = (uint8_t)((g_uvc.hcsparams >> 24) & 0xffu);
   g_uvc.dwc3_id = getreg32(DWC3_GSNPSID);
+  syslog(LOG_INFO, "A733 USB host: before reset cap=%02x ver=%04x hcs=%08lx id=%08lx\n",
+         g_uvc.caplength, g_uvc.hciversion,
+         (unsigned long)g_uvc.hcsparams, (unsigned long)g_uvc.dwc3_id);
   if (g_uvc.caplength < 0x20 || g_uvc.caplength > 0x80 ||
       ((g_uvc.dwc3_id & UINT32_C(0xffff0000)) != UINT32_C(0x55330000) &&
        (g_uvc.dwc3_id & UINT32_C(0xffff0000)) != UINT32_C(0x33310000)))
@@ -966,6 +984,11 @@ static int xhci2_checkpoint(void)
    */
 
   g_uvc.typec_checkpoint = typec_host_enable();
+  if (g_uvc.typec_checkpoint < 0)
+    {
+      return g_uvc.typec_checkpoint;
+    }
+
   delay_ms(20);
   dwc3_usb2_host_init();
   opbase = XHCI2_BASE + g_uvc.caplength;
@@ -1464,16 +1487,13 @@ static int probe(void)
   ret = xhci2_checkpoint();
   g_uvc.checkpoint = ret;
 
-  /* Keep the validated EHCI descriptor engine linked while the xHCI transfer
-   * rings are implemented in the next checkpoint.  It must never touch USB0.
-   */
+  /* Never redirect failed xHCI accesses to the power/device-only USB0 port.
+   * Keep legacy helpers referenced without executing them until their
+   * descriptor parser is migrated to a real xHCI control-transfer path. */
 
-  if (g_uvc.dwc3_id == UINT32_MAX)
-    {
-      usb0_clock_enable();
-      ret = ehci0_checkpoint();
-      g_uvc.enumeration = ret == OK ? enumerate() : ret;
-    }
+  (void)usb0_clock_enable;
+  (void)ehci0_checkpoint;
+  (void)enumerate;
 
   snapshot();
   nxmutex_unlock(&g_uvc.lock);
@@ -1660,7 +1680,9 @@ int a733_usb_camera_initialize(void)
       g_registered = true;
     }
 
-  probe(); /* Camera absence is not a board-initialization failure. */
+  ret = probe(); /* Device absence must not block system initialization. */
+  syslog(LOG_INFO, "A733 USB diagnostic node registered; host probe=%d (not audio-ready)\n",
+         ret);
   return OK;
 }
 
