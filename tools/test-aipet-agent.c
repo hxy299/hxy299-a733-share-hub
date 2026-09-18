@@ -6,6 +6,15 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <pthread.h>
+
+static int claims;
+static void *claim_worker(void *unused)
+{
+  (void)unused;
+  if (aipet_agent_claim() == 0) __sync_fetch_and_add(&claims, 1);
+  return NULL;
+}
 
 static agent_msg_t captured;
 static int reject;
@@ -22,8 +31,20 @@ int main(void)
   char text[4097];
   agent_msg_t old;
   uint64_t elapsed;
+  pthread_t contenders[8];
+  int phase, pid, error;
+  aipet_agent_status(&phase, &pid, &error);
+  assert(phase == 0 && pid == -1 && error == 0);
+  for (int i = 0; i < 8; ++i)
+    assert(pthread_create(&contenders[i], NULL, claim_worker, NULL) == 0);
+  for (int i = 0; i < 8; ++i) assert(pthread_join(contenders[i], NULL) == 0);
+  assert(claims == 1);
+  aipet_agent_status(&phase, &pid, &error);
+  assert(phase == 1 && pid == getpid());
   assert(aipet_agent_submit("hello", 100) == -ENODEV);
   assert(aipet_agent_attach() == 0);
+  aipet_agent_status(&phase, &pid, &error);
+  assert(phase == 2);
   assert(aipet_agent_submit("hello", 1000) == 0);
   assert(aipet_agent_submit("second", 1000) == -EBUSY);
   assert(aipet_agent_poll(text, sizeof(text), NULL) == -EAGAIN);
@@ -50,5 +71,9 @@ int main(void)
   assert(aipet_agent_poll(text, sizeof(text), NULL) == -ETIMEDOUT);
   aipet_agent_detach();
   assert(!mbus_tap_try_deliver(&captured));
+  aipet_agent_finish(-1);
+  aipet_agent_status(&phase, &pid, &error);
+  assert(phase == 3 && pid == -1 && error == -1);
+  assert(aipet_agent_claim() == -EBUSY);
   return 0;
 }

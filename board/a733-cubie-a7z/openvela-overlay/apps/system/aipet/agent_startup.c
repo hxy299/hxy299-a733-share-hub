@@ -67,10 +67,12 @@ void aipet_startup_status(void)
   const char *names[] = {"not-started", "starting", "ready", "failed", "stopped"};
   aipet_agent_status(&phase, &pid, &error);
   pthread_mutex_lock(&startup_lock);
+  int running = boot_running;
+  const char *reason = waiting;
+  pthread_mutex_unlock(&startup_lock);
   printf("agent: %s pid=%d error=%d; initializer=%s waiting=%s\n",
          names[phase >= 0 && phase < 5 ? phase : 3], pid, error,
-         boot_running ? "running" : "idle", waiting);
-  pthread_mutex_unlock(&startup_lock);
+         running ? "running" : "idle", reason);
   a733_auto_option("agent", "status");
   puts("ready means local engine attached; cloud TLS connects on first request.");
 }

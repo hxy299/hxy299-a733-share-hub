@@ -5,6 +5,7 @@ if(CONFIG_EXAMPLES_AI_AGENT_VELA)
     PRIORITY 100
     SRCS aipet_main.cxx pet_core.cxx agent_startup.c
     INCLUDE_DIRECTORIES
+      ${NUTTX_APPS_DIR}/netutils/cjson/cJSON
       ${CMAKE_SOURCE_DIR}/../packages/ai_agent/src
       ${CMAKE_SOURCE_DIR}/../packages/ai_agent/include)
 endif()
