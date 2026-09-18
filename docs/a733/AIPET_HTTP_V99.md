@@ -29,3 +29,11 @@ DeepSeek 配置读入，严格 TLS 握手成功。请求从 60.795 秒到 122.01
 7. 不要以断网后能收到旧请求回复认定取消成功；本地超时与取消仅阻止旧回复呈现。
 
 当前仍为官方 Agent 文本集成候选，不是完整语音桌宠。
+
+## 中断恢复记录
+
+2026-09-18 恢复工作时，旧构建停在 1327/2060，WSL 中已无构建进程；临时 `/tmp` 备份丢失，官方工作区中仍有暂存文件。已在 `A733-A7Z-ALL-Files/v99-resume-recovery/` 保存暂存 Agent 源码，再通过反向补丁撤销暂存改动。
+
+HTTP 补丁重新生成精确上下文，撤销校验使用 `--fuzz=0` 通过；分块测试在 ASan/UBSan 下通过。后续构建备份改为持久目录 `A733-A7Z-ALL-Files/build-temp-backups/staging.*`，构建脚本正常退出时恢复源码，INT/TERM 触发退出清理。强制关闭 WSL 或断电仍可能跳过清理，但备份不再随 `/tmp` 丢失。
+
+代码恢复快照：`A733-A7Z-ALL-Files/a733-online-agent-v99-resume.bundle`。增量构建日志：`A733-A7Z-ALL-Files/a733-online-agent-v99-resume-build.log`。构建通过不等于板端联网修复已验证，仍须按上文实机测试。
