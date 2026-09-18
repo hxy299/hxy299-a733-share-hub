@@ -3,7 +3,7 @@ if(CONFIG_EXAMPLES_AI_AGENT_VELA)
     NAME aipet
     STACKSIZE 16384
     PRIORITY 100
-    SRCS aipet_main.cxx pet_core.cxx agent_startup.c agent_setup.c
+    SRCS aipet_main.cxx pet_core.cxx pet_routes.cxx agent_startup.c agent_setup.c
     INCLUDE_DIRECTORIES
       ${NUTTX_APPS_DIR}/netutils/cjson/cJSON
       ${CMAKE_SOURCE_DIR}/../packages/ai_agent/src

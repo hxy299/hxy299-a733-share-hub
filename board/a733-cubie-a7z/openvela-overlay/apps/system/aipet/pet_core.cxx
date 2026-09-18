@@ -263,8 +263,9 @@ Turn Conversation::run(const std::string &user)
           turn.route = Route::cloud;
           for (const auto &rule : rules_.local)
             if (match(rule, text)) { turn.route = Route::local; break; }
-          if (turn.route == Route::cloud && !ports_.online())
-            turn.route = Route::local;
+          /* vision-4: online non-direct requests always use cloud; local
+           * inference is exclusively an offline/backend-failure fallback. */
+          turn.route = ports_.online() ? Route::cloud : Route::local;
           state_ = State::generating;
           trace_phase(turn.route == Route::cloud ? "cloud" : "local", 0);
           bool ok;

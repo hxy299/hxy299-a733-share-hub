@@ -1,6 +1,7 @@
 #include "agent_bridge.h"
 #include "agent_secret.h"
 #include "pet_core.hxx"
+#include "pet_routes.hxx"
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -18,38 +19,19 @@ extern "C" int aipet_main(int argc, char **argv)
     return aipet_startup(1);
   if (argc == 2 && !std::strcmp(argv[1], "cancel"))
     { aipet_agent_cancel(); return 0; }
+  if (argc == 3 && !std::strcmp(argv[1], "route"))
+    return aipet::routed_ask(argv[2], true, false);
+  if (argc == 3 && !std::strcmp(argv[1], "cloud"))
+    return aipet::routed_ask(argv[2], false, true);
   if (argc != 3 || std::strcmp(argv[1], "ask"))
     {
       std::printf("aipet init (one-time online setup via serial/SSH)\n"
                   "aipet ask \"text\" | aipet cancel\n"
+                  "aipet route \"text\" (inspect only) | cloud \"text\" (bypass rules)\n"
                   "aipet start | status; service agent on|off|status\n"
                   "Boot initialization waits for network/time/config.\n"
                   "Online text integration; microphone/UART output pending.\n");
       return 1;
     }
-  int status = aipet_agent_submit(argv[2], 90000);
-  if (status)
-    {
-      std::printf("aipet: submit failed %d\n", status);
-      if (status == -EILSEQ) std::puts("Invalid UTF-8 input; use a UTF-8 terminal and re-enter the complete message.");
-      return 1;
-    }
-  char raw[4097];
-  uint64_t elapsed = 0;
-  do
-    {
-      status = aipet_agent_poll(raw, sizeof(raw), &elapsed);
-      if (status == -EAGAIN) usleep(10000);
-    }
-  while (status == -EAGAIN);
-  if (status)
-    { std::printf("aipet: reply failed %d\n", status); return 1; }
-  aipet::Reply reply;
-  if (!aipet::parse_reply(raw, reply))
-    { std::printf("aipet: invalid reply\n"); return 1; }
-  std::printf("%s\n[emotion=%s actions=%zu elapsed=%llu ms]\n",
-              reply.text.c_str(), reply.emotion.c_str(), reply.actions.size(),
-              (unsigned long long)elapsed);
-  /* Never execute parsed actions before numeric validation/hardware binding. */
-  return 0;
+  return aipet::routed_ask(argv[2], false, false);
 }

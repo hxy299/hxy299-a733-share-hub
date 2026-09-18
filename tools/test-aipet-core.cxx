@@ -96,9 +96,9 @@ int main(int argc, char **argv)
   aipet::Conversation conversation(rules, ports);
   assert(conversation.run("HELLO 笑话").route == aipet::Route::direct);
   assert(ports.network == 0 && ports.local == 0 && ports.cloud == 0);
-  assert(conversation.run("笑话").route == aipet::Route::local && ports.network == 0);
-  assert(ports.received.text == "本地回复" && ports.received.actions.size() == 1);
-  assert(conversation.run("写诗").route == aipet::Route::cloud && ports.cloud == 1);
+  assert(conversation.run("笑话").route == aipet::Route::cloud && ports.network == 1);
+  assert(ports.received.text == "云端回复");
+  assert(conversation.run("写诗").route == aipet::Route::cloud && ports.cloud == 2);
   ports.cloud_ok = false;
   auto fallback = conversation.run("写诗");
   assert(fallback.ok && fallback.cloud_fallback && fallback.route == aipet::Route::local);
