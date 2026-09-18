@@ -36,3 +36,11 @@ dmesg
 xHCI 传输环/设备枚举、UAC 音频类采集、openvela Media 音频路由、UART4 驱动和实际 TTS 输出仍未完成。本版不提供麦克风录音命令，不应称为语音全链路完成版。
 
 源代码恢复包：上级 `a733-usb-v104-source.bundle`；构建前恢复包 `a733-usb-v104-before-build.bundle`。官方源码仅临时 staging 并恢复。
+
+## 构建记录
+
+构建通过；内核 SHA256：`af47e949079e0b51c77165d05f1840a0f7e50fff60a06d623eb80ad9bc5f5a2e`。内核中已核验 `A733 USB combo v104` 字符串。
+
+打包与 GPT、文件系统、内核回读验证通过；镜像 2147483648 字节。最终 SHA256：`1430517e5a674221c169a334d9efdcc956e755c94d8c98ba964402c39fe97725`，已用 Windows 再次独立核验。
+
+打包基底为校验一致的 v103 镜像（v102 文件已不在目录中），基底 SHA256：`3e0f0700bed8015b9d4c6b29ca343e0f28f688d1fa4afabb75173e399ffff3c2`。基底未修改。官方 USB 源文件构建后 SHA256 恢复为 `53917e9e4bdc74b0d653838db538c651b4a7ed1e0ea6326bc44921a892f46156`。
