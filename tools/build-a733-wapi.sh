@@ -8,7 +8,8 @@ workspace_root="$(cd "$team_dir/../.." && pwd)"
 official="$workspace_root/quickly-openvela"
 overlay="$team_dir/board/a733-cubie-a7z/openvela-overlay"
 build="$official/cmake_out/cubie-a7z_nsh_v69_aipet_modelcheck"
-backup="$(mktemp -d)"
+mkdir -p "$team_dir/../build-temp-backups"
+backup="$(mktemp -d "$team_dir/../build-temp-backups/staging.XXXXXX")"
 
 bash "$script_dir/check-openvela-first.sh"
 
@@ -83,6 +84,8 @@ restore_official()
 }
 
 trap restore_official EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 for path in "${files[@]}"; do
   mkdir -p "$backup/$(dirname "$path")"
   if [[ -f "$official/$path" ]]; then
