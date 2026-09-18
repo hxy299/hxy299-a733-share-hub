@@ -37,3 +37,18 @@ DeepSeek 配置读入，严格 TLS 握手成功。请求从 60.795 秒到 122.01
 HTTP 补丁重新生成精确上下文，撤销校验使用 `--fuzz=0` 通过；分块测试在 ASan/UBSan 下通过。后续构建备份改为持久目录 `A733-A7Z-ALL-Files/build-temp-backups/staging.*`，构建脚本正常退出时恢复源码，INT/TERM 触发退出清理。强制关闭 WSL 或断电仍可能跳过清理，但备份不再随 `/tmp` 丢失。
 
 代码恢复快照：`A733-A7Z-ALL-Files/a733-online-agent-v99-resume.bundle`。增量构建日志：`A733-A7Z-ALL-Files/a733-online-agent-v99-resume-build.log`。构建通过不等于板端联网修复已验证，仍须按上文实机测试。
+
+## 构建验证
+
+增量构建退出码为 0；生成内核 1,891,544 字节，SHA256 为 `e29cb1a20bb45915fb4b1481e40cabb0dd6cded8275048694dad1660ca2fb622`。ARM64 Image 标识为 `41 52 4d 64`，符号表包含 `aipet_main`、`ai_agent_main` 和 `aipet_agent_attach`。内核、ELF 和符号表保存于 `A733-A7Z-ALL-Files/a733-online-agent-v99-kernel/`。
+
+构建退出后，7 个官方 Agent 暂存文件与构建前备份哈希一致；官方 `apps/system/aipet` 暂存目录已撤除，v99 的 FAT 配置保存在仓库 overlay，不留在官方板级配置中。
+
+## 最终候选镜像
+
+- 文件：`A733-A7Z-ALL-Files/openvela-a733-cubie-a7z-sd-online-agent-v99-candidate.img`
+- 大小：2,147,483,648 字节（2 GiB）。
+- 最终 SHA256：`43b2e897ffb2e6d2094cd671fbe92cc9f9b7dda9e0071c9bad3fae05556fddc6`；同目录 `.img.sha256` 保存校验值。
+- 打包脚本退出码 0，ext4 检查和内核回读校验通过，CA 文件写入并回读比对通过，GPT 显示 `No problems found`。分区 4 末尾非 2048 扇区对齐提示是既有布局提示，未更改分区布局。
+- 不包含 API Key，旧 v98 镜像未覆盖。最终代码快照：`A733-A7Z-ALL-Files/a733-online-agent-v99-final.bundle`。
+- 这是联网文字链路修复候选，等待实机验证，不代表 USB 麦克风和 UART TTS 已完成。
