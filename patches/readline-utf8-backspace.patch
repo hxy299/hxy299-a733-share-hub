@@ -1,6 +1,8 @@
 --- a/apps/system/readline/readline_common.c
 +++ b/apps/system/readline/readline_common.c
-@@ -650,1 +650,7 @@
+@@ -638,5 +638,11 @@
+           if (nch > 0)
+             {
                nch--;
 +              /* Delete the complete UTF-8 sequence, not one byte. */
 +              while (nch > 0 &&
@@ -8,3 +10,5 @@
 +                {
 +                  nch--;
 +                }
+ 
+ #ifdef CONFIG_READLINE_ECHO

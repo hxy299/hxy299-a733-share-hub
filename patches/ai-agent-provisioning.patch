@@ -27,6 +27,10 @@
 +        value = sealed;
 +    }
      pthread_mutex_lock(&s_lock);
-@@ -136,1 +149,2 @@
+@@ -133,5 +144,6 @@
+     int ret = save_json(root);
+     cJSON_Delete(root);
      pthread_mutex_unlock(&s_lock);
 +    aipet_wipe(sealed, sizeof(sealed));
+     return ret;
+ }

@@ -14,6 +14,9 @@
 #include <termios.h>
 #include <unistd.h>
 
+#ifndef AIPET_SETUP_DIR
+#define AIPET_SETUP_DIR "/data/ai_agent"
+#endif
 static pthread_mutex_t setup_lock = PTHREAD_MUTEX_INITIALIZER;
 /* Raw-byte terminal reader: Ctrl+C cancels, UTF-8 bytes are not stripped.
  * Signal mask and terminal state are restored before returning. */
@@ -66,7 +69,7 @@ static int ascii_field(const char *s)
 static cJSON *existing(void)
 {
   char data[4097];
-  FILE *f=fopen("/data/ai_agent/config/config.json","rb");
+  FILE *f=fopen(AIPET_SETUP_DIR "/config/config.json","rb");
   if (!f) return errno==ENOENT ? cJSON_CreateObject() : NULL;
   size_t n=fread(data,1,sizeof(data)-1,f);
   int extra=fgetc(f), failed=ferror(f); fclose(f);
@@ -83,7 +86,7 @@ static int field(cJSON *root,const char *name,const char *value)
 }
 static int save(cJSON *root)
 {
-  const char *tmp="/data/ai_agent/config/config.json.new";
+  const char *tmp=AIPET_SETUP_DIR "/config/config.json.new";
   char *json=cJSON_PrintUnformatted(root);
   if (!json) return -ENOMEM;
   int fd=open(tmp,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0600), r=0;
@@ -97,7 +100,7 @@ static int save(cJSON *root)
   }
   if (!r && fsync(fd)) r=-errno;
   if (close(fd) && !r) r=-errno;
-  if (!r && rename(tmp,"/data/ai_agent/config/config.json")) r=-errno;
+  if (!r && rename(tmp,AIPET_SETUP_DIR "/config/config.json")) r=-errno;
   if (r) unlink(tmp);
   aipet_wipe(json,size); free(json); return r;
 }
@@ -124,8 +127,8 @@ int aipet_setup(void)
   r=line("API key (hidden): ",key,sizeof(key),1);
   if (r) goto done;
   if (!ascii_field(key)) { r=-EINVAL; goto done; }
-  if (mkdir("/data/ai_agent",0700) && errno!=EEXIST) { r=-errno; goto done; }
-  if (mkdir("/data/ai_agent/config",0700) && errno!=EEXIST) { r=-errno; goto done; }
+  if (mkdir(AIPET_SETUP_DIR,0700) && errno!=EEXIST) { r=-errno; goto done; }
+  if (mkdir(AIPET_SETUP_DIR "/config",0700) && errno!=EEXIST) { r=-errno; goto done; }
   root=existing();
   if (!root) { r=-EINVAL; goto done; }
   r=aipet_secret_seal(key,sealed,sizeof(sealed));
