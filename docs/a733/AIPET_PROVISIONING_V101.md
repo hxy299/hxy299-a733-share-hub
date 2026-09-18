@@ -78,3 +78,18 @@ reboot
 首次构建暴露补丁上下文过弱，wipe 行被插入函数外，编译失败。已加严上下文，保留失败日志 `../a733-online-agent-v101-build.log`；修正后主体构建通过。最终包含取消处理的镜像需以最终构建日志和实机测试为准。
 
 实机验收：分别测试两种账户；连续三次中文请求；编辑/退格中文后发送；初次配置中 Ctrl+C 后重新初始化；重启后无需配置自动 ready；旧卡重配到加密配置；错误 key、错误模型和掉网时错误可诊断。主机测试不代替这些实机结果。
+
+## 最终构建与镜像
+
+最终构建 exit=0：`../a733-online-agent-v101-final-build.log`。串口超长输入排空的小修正在该源文件编译前同步至临时 staging，已由最终构建编译；主机 PTY 超长 key 拒绝回归通过。
+
+- 候选镜像：`../openvela-a733-cubie-a7z-sd-online-agent-v101-candidate.img`，2147483648 字节。
+- 镜像 SHA256：`7de5735b30594384b29c2cef946b941f890367e2eed53d73616681b1394402b6`。
+- 内核/ELF/System.map：`../a733-online-agent-v101-kernel/`。
+- 内核 SHA256：`cf83a8709cffd6cedde66a40521d55d8f20d57f06d29c69429ef8c32e2124343`。
+- 打包日志：`../a733-online-agent-v101-image.log`；GPT、ext4、嵌入内核和 CA 读回校验通过，Windows 独立哈希一致。
+- 源码恢复包：`../a733-online-agent-v101-final.bundle`，不含模型/镜像/私人凭证。
+
+构建退出后临时 aipet 目录移除；与 v100 恢复目录比对的 41 个既有官方基线文件无哈希差异。新增 patch 对应的 config_store/readline 已恢复无本轮 hook，构建脚本将它们加入备份恢复列表。官方仓库的 .git 元数据在本机无法被 Git 正常解析，未修复或改动这些元数据；此次恢复检查使用文件内容与基线哈希，不冒称 git diff 验证。
+
+烧录会覆盖 TF 卡数据，请先备份模型、Wi-Fi/SSH/FTP 配置及必要的 Agent 私人配置。候选镜像不预置你的 API-key，烧录后先联网，再运行 `aipet init`。仍未宣称通过 v101 实机验收。

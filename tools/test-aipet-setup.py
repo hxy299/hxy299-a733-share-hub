@@ -32,7 +32,7 @@ assert cfg['model']=='deepseek-flash' and cfg['llm_host']=='api.deepseek.com'
 cfg=run(b'2',b'custom-mimo-next',b'host-test-secret-456')
 assert cfg['model']=='custom-mimo-next' and cfg['llm_host']=='api.xiaomimimo.com'
 print('PTY setup: both providers, default/custom model, hidden key and encrypted JSON passed')
-for interrupt in ('byte','signal'):
+for interrupt in ('byte','signal','overlong'):
     master,slave=pty.openpty()
     original=termios.tcgetattr(slave)
     proc=subprocess.Popen([binary],stdin=slave,stdout=slave,stderr=slave)
@@ -44,11 +44,11 @@ for interrupt in ('byte','signal'):
             if select.select([master],[],[],0.1)[0]:
                 transcript.extend(os.read(master,4096))
         if prompt!=b'API key (hidden):': os.write(master,b'\n')
-    os.write(master,b'partial-secret')
+    os.write(master,b'partial-secret' if interrupt!='overlong' else b'x'*160+b'\n')
     time.sleep(0.05)
     if interrupt=='byte': os.write(master,b'\x03')
-    else: os.kill(proc.pid,signal.SIGINT)
+    elif interrupt=='signal': os.kill(proc.pid,signal.SIGINT)
     assert proc.wait(timeout=10)==1
     assert termios.tcgetattr(slave)==original
     os.close(slave); os.close(master)
-print('Ctrl+C byte/signal cancellation restores terminal state')
+print('Ctrl+C byte/signal and overlong-key rejection restore terminal state')
