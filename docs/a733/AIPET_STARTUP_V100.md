@@ -54,3 +54,7 @@ aipet ask "请只回答：启动测试成功"
 - 不代表 USB 麦克风、UART TTS、I2S、多轮记忆或网络长期稳定性已验收。
 - 所有新增源码保存在仓库 overlay，官方 main 的单实例入口通过 `patches/ai-agent-single-instance.patch` 临时应用，构建后恢复。
 - 构建前已保存 v100 Git bundle 快照。主机 ASan/UBSan 测试覆盖 8 线程并发所有权竞争、ready/failed 状态及原有消息边界；这不等于板测通过。
+
+## 构建错误记录
+
+首轮新增启动模块编译失败：`fatal error: cJSON.h: No such file or directory`。原因是应用目标没有继承官方 Agent 的私有 cJSON include 路径；修复为在 aipet 的 CMakeLists 中显式增加 `${NUTTX_APPS_DIR}/netutils/cjson/cJSON`，重新配置并构建。首轮日志保留于 `A733-A7Z-ALL-Files/a733-online-agent-v100-build.log`，重构建日志为 `a733-online-agent-v100-rebuild.log`。
