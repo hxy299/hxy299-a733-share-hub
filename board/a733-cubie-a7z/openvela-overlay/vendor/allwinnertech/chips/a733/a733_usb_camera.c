@@ -129,6 +129,14 @@
 #define SERDES_USB_ACLK          (1u << 17)
 #define SERDES_USB_HCLK          (1u << 16)
 #define SERDES_USB2_PHY_RSTN     (1u << 4)
+#define COMBO0_TOP               (SERDES_SUBSYS_BASE + 0x1000)
+#define COMBO0_CTRL0             (COMBO0_TOP + 0x00)
+#define COMBO0_CTRL1             (COMBO0_TOP + 0x04)
+#define COMBO0_CTRL2             (COMBO0_TOP + 0x08)
+#define COMBO0_CTRL3             (COMBO0_TOP + 0x0c)
+#define COMBO0_STATUS            (COMBO0_TOP + 0x900)
+#define COMBO_PIPE_CLOCK_MAP     (SERDES_SUBSYS_BASE + 0x6100)
+#define COMBO_PIPE_RX_MAP        (SERDES_SUBSYS_BASE + 0x6104)
 #define XHCI2_BASE               UINT64_C(0x06a00000)
 #define DWC3_GCTL                (XHCI2_BASE + 0xc110)
 #define DWC3_GSNPSID             (XHCI2_BASE + 0xc120)
@@ -205,6 +213,7 @@ struct uvc_state_s
   uint32_t usbcmd;
   uint32_t usbsts;
   int xhci_reset;
+  int combo_checkpoint;
   uint16_t xhci_cnr_polls;
   uint32_t portsc;
   uint32_t ccu_phy;
@@ -858,6 +867,48 @@ static int usb2_power_on(void)
   return OK;
 }
 
+/* Restore the digital reference/PIPE path before HCRST. Register meanings
+ * are cross-checked against sun60iw2p1.dtsi and the vendor Combo PHY driver.
+ * Keep analog tuning inherited from firmware: do not invent calibration
+ * values or reset a PHY whose complete tuning has not been ported yet. */
+
+static int combo0_reference_enable(void)
+{
+  unsigned int retry;
+  uint32_t value;
+
+  a733_uvc_modifyreg32(COMBO0_CTRL2, 1u << 1, 0);
+  a733_uvc_modifyreg32(COMBO0_CTRL1, 0,
+                       (1u << 24) | (1u << 20) | 1u);
+  a733_uvc_modifyreg32(COMBO_PIPE_CLOCK_MAP, 0xfu, 0);
+  a733_uvc_modifyreg32(COMBO_PIPE_RX_MAP, 0xfu, 0);
+  value = g_uvc.typec_orientation == 2 ? (1u << 12) : 0;
+  a733_uvc_modifyreg32(COMBO0_CTRL0, 1u << 12, value);
+  a733_uvc_modifyreg32(COMBO0_CTRL0, 0, 1u | (1u << 4));
+  a733_uvc_modifyreg32(COMBO0_CTRL3, 0, 1u);
+  a733_uvc_modifyreg32(COMBO0_CTRL3, 0x3fu << 4, 1u << 4);
+
+  for (retry = 0; retry < 100; retry++)
+    {
+      if ((getreg32(COMBO0_STATUS) & 1u) != 0)
+        {
+          break;
+        }
+
+      delay_ms(1);
+    }
+
+  syslog(LOG_INFO, "A733 USB combo v104: ctrl=%08lx/%08lx/%08lx/%08lx status=%08lx maps=%08lx/%08lx ready=%u\n",
+         (unsigned long)getreg32(COMBO0_CTRL0),
+         (unsigned long)getreg32(COMBO0_CTRL1),
+         (unsigned long)getreg32(COMBO0_CTRL2),
+         (unsigned long)getreg32(COMBO0_CTRL3),
+         (unsigned long)getreg32(COMBO0_STATUS),
+         (unsigned long)getreg32(COMBO_PIPE_CLOCK_MAP),
+         (unsigned long)getreg32(COMBO_PIPE_RX_MAP), retry < 100);
+  return retry < 100 ? OK : -ETIMEDOUT;
+}
+
 static void dwc3_usb2_host_init(void)
 {
   uint32_t value;
@@ -990,6 +1041,13 @@ static int xhci2_checkpoint(void)
     }
 
   delay_ms(20);
+  g_uvc.combo_checkpoint = combo0_reference_enable();
+  if (g_uvc.combo_checkpoint < 0)
+    {
+      syslog(LOG_ERR, "A733 USB host: Combo PHY not ready; HCRST skipped\n");
+      return g_uvc.combo_checkpoint;
+    }
+
   dwc3_usb2_host_init();
   opbase = XHCI2_BASE + g_uvc.caplength;
   g_uvc.xhci_reset = xhci2_halt_reset(opbase);
@@ -1478,6 +1536,11 @@ static int probe(void)
   int ret;
 
   nxmutex_lock(&g_uvc.lock);
+  g_uvc.xhci_reset = -EAGAIN;
+  g_uvc.combo_checkpoint = -EAGAIN;
+  g_uvc.xhci_cnr_polls = 0;
+  g_uvc.portsc = 0;
+  g_uvc.portsc2 = 0;
   g_uvc.enumeration = -EAGAIN;
   g_uvc.parse = -EAGAIN;
   g_uvc.vid = 0;
@@ -1574,6 +1637,8 @@ static ssize_t uvc_read(struct file *filep, char *buffer, size_t buflen)
          (unsigned long)((g_uvc.phy_iscr >> 25) & 3u),
          (unsigned long)((g_uvc.phy_iscr >> 24) & 1u),
          (unsigned long)g_uvc.ahb_master);
+  APPEND("combo-v104: checkpoint=%d (PMA ready required before HCRST)\n",
+         g_uvc.combo_checkpoint);
   APPEND("serdes: cfg=%08lx bgr=%08lx usb-bgr=%08lx rtc=%08lx\n",
          (unsigned long)g_uvc.serdes_clock,
          (unsigned long)g_uvc.serdes_bgr,
