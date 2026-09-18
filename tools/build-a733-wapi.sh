@@ -38,6 +38,8 @@ patched_files=(
   packages/ai_agent/src/core/agent_loop.c
   packages/ai_agent/src/core/session_mgr.c
   packages/ai_agent/src/tools/skill_loader.c
+  packages/ai_agent/src/infra/config_store.c
+  apps/system/readline/readline_common.c
 )
 staged_files=()
 aipet_saved=false
@@ -129,6 +131,10 @@ patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
   < "$team_dir/patches/ai-agent-http-completion.patch"
 patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
   < "$team_dir/patches/ai-agent-single-instance.patch"
+patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
+  < "$team_dir/patches/ai-agent-provisioning.patch"
+patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
+  < "$team_dir/patches/readline-utf8-backspace.patch"
 
 cd "$official"
 export PATH="$official/prebuilts/build-tools/linux-x86_64/bin:$official/prebuilts/gcc/linux-x86_64/aarch64-none-elf/bin:$official/prebuilts/tools/linux-x86_64:$official/prebuilts/tools/cmake/bin:$official/prebuilts/tools/ninja:/usr/bin:/bin:${PATH:-}"

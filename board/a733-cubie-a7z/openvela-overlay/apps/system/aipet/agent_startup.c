@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <nuttx/config.h>
 #include "agent_bridge.h"
+#include "agent_secret.h"
 #include <system/a733_services.h>
 #include <cJSON.h>
 #include <ifaddrs.h>
@@ -54,8 +55,10 @@ static int configured(void)
   data[used] = 0;
   cJSON *root = cJSON_Parse(data);
   cJSON *key = root ? cJSON_GetObjectItemCaseSensitive(root, "api_key") : NULL;
-  int ready = cJSON_IsString(key) && key->valuestring[0] &&
-              strncmp(key->valuestring, "REPLACE", 7);
+  char plain[128];
+  int ready = cJSON_IsString(key) &&
+              !aipet_secret_open(key->valuestring, plain, sizeof(plain));
+  aipet_wipe(plain, sizeof(plain));
   cJSON_Delete(root);
   memset(data, 0, sizeof(data));
   return ready;

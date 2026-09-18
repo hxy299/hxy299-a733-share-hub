@@ -45,6 +45,13 @@ int main(void)
   assert(aipet_agent_attach() == 0);
   aipet_agent_status(&phase, &pid, &error);
   assert(phase == 2);
+  assert(aipet_agent_submit("\xe4\xb8", 1000) == -EILSEQ);
+  assert(aipet_agent_submit("\xc0\xaf", 1000) == -EILSEQ);
+  assert(aipet_agent_submit("\xed\xa0\x80", 1000) == -EILSEQ);
+  assert(aipet_agent_submit("\xf4\x90\x80\x80", 1000) == -EILSEQ);
+  assert(aipet_agent_submit("给我讲 个故事", 1000) == 0);
+  aipet_agent_cancel();
+  assert(aipet_agent_poll(text, sizeof(text), NULL) == -ECANCELED);
   assert(aipet_agent_submit("hello", 1000) == 0);
   assert(aipet_agent_submit("second", 1000) == -EBUSY);
   assert(aipet_agent_poll(text, sizeof(text), NULL) == -EAGAIN);

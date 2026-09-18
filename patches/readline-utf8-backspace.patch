@@ -1,0 +1,10 @@
+--- a/apps/system/readline/readline_common.c
++++ b/apps/system/readline/readline_common.c
+@@ -650,1 +650,7 @@
+               nch--;
++              /* Delete the complete UTF-8 sequence, not one byte. */
++              while (nch > 0 &&
++                     ((unsigned char)buf[nch] & 0xc0) == 0x80)
++                {
++                  nch--;
++                }

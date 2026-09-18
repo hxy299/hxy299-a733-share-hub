@@ -1,4 +1,5 @@
 #include "agent_bridge.h"
+#include "agent_secret.h"
 #include "pet_core.hxx"
 #include <cerrno>
 #include <cstdio>
@@ -7,6 +8,8 @@
 
 extern "C" int aipet_main(int argc, char **argv)
 {
+  if (argc == 2 && (!std::strcmp(argv[1], "init") || !std::strcmp(argv[1], "setup")))
+    return aipet_setup();
   if (argc == 2 && !std::strcmp(argv[1], "status"))
     { aipet_startup_status(); return 0; }
   if (argc == 2 && !std::strcmp(argv[1], "start"))
@@ -17,7 +20,8 @@ extern "C" int aipet_main(int argc, char **argv)
     { aipet_agent_cancel(); return 0; }
   if (argc != 3 || std::strcmp(argv[1], "ask"))
     {
-      std::printf("aipet ask \"text\" | aipet cancel\n"
+      std::printf("aipet init (one-time online setup via serial/SSH)\n"
+                  "aipet ask \"text\" | aipet cancel\n"
                   "aipet start | status; service agent on|off|status\n"
                   "Boot initialization waits for network/time/config.\n"
                   "Online text integration; microphone/UART output pending.\n");
@@ -25,7 +29,11 @@ extern "C" int aipet_main(int argc, char **argv)
     }
   int status = aipet_agent_submit(argv[2], 90000);
   if (status)
-    { std::printf("aipet: submit failed %d\n", status); return 1; }
+    {
+      std::printf("aipet: submit failed %d\n", status);
+      if (status == -EILSEQ) std::puts("Invalid UTF-8 input; use a UTF-8 terminal and re-enter the complete message.");
+      return 1;
+    }
   char raw[4097];
   uint64_t elapsed = 0;
   do

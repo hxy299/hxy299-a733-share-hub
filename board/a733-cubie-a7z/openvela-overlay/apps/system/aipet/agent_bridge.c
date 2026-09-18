@@ -82,6 +82,27 @@ int aipet_agent_attach(void)
   return status ? -EBUSY : 0;
 }
 
+/* Strict RFC 3629: reject truncated, overlong, surrogate and out-of-range
+ * input before cJSON (which deliberately preserves unchecked bytes). */
+static int valid_utf8(const unsigned char *s, size_t n)
+{
+  size_t i=0;
+  while (i<n) {
+    unsigned c=s[i++], cp; size_t rest; unsigned min;
+    if (c<128) continue;
+    if (c>=0xc2 && c<=0xdf) { rest=1; cp=c&31; min=0x80; }
+    else if (c>=0xe0 && c<=0xef) { rest=2; cp=c&15; min=0x800; }
+    else if (c>=0xf0 && c<=0xf4) { rest=3; cp=c&7; min=0x10000; }
+    else return 0;
+    if (rest>n-i) return 0;
+    while (rest--) {
+      c=s[i++]; if ((c&0xc0)!=0x80) return 0;
+      cp=(cp<<6)|(c&63);
+    }
+    if (cp<min || cp>0x10ffff || (cp>=0xd800 && cp<=0xdfff)) return 0;
+  }
+  return 1;
+}
 int aipet_agent_submit(const char *text, uint32_t timeout_ms)
 {
   agent_msg_t msg = {0};
@@ -89,7 +110,8 @@ int aipet_agent_submit(const char *text, uint32_t timeout_ms)
   int status;
   if (!text || timeout_ms < 100 || timeout_ms > 120000) return -EINVAL;
   length = strnlen(text, PET_TEXT_MAX + 1);
-  if (!length || length > PET_TEXT_MAX) return -EMSGSIZE;
+    if (!length || length > PET_TEXT_MAX) return -EMSGSIZE;
+    if (!valid_utf8((const unsigned char *)text, length)) return -EILSEQ;
   msg.content = malloc(length + 1);
   if (!msg.content) return -ENOMEM;
   memcpy(msg.content, text, length + 1);
