@@ -26,6 +26,8 @@ static int line(const char *prompt, char *out, size_t cap, int secret)
   sigset_t set, saved;
   size_t used=0;
   int result=0;
+  int flags=fcntl(0,F_GETFL);
+  if (flags<0) return -errno;
   if (tcgetattr(0,&old)) return -ENOTTY;
   sigemptyset(&set); sigaddset(&set,SIGINT);
   int sr=pthread_sigmask(SIG_BLOCK,&set,&saved);
@@ -33,11 +35,21 @@ static int line(const char *prompt, char *out, size_t cap, int secret)
   changed=old; changed.c_lflag &= ~(ICANON|ISIG|ECHO);
   changed.c_cc[VMIN]=1; changed.c_cc[VTIME]=0;
   if (tcsetattr(0,TCSANOW,&changed)) { result=-errno; goto done; }
+  if (fcntl(0,F_SETFL,flags|O_NONBLOCK)) {
+    result=-errno; tcsetattr(0,TCSANOW,&old); goto done;
+  }
   printf("%s",prompt); fflush(stdout);
   for (;;) {
+    sigset_t pending;
+    if (!sigpending(&pending) && sigismember(&pending,SIGINT)) {
+      struct timespec zero={0,0};
+      sigtimedwait(&set,NULL,&zero);
+      result=-ECANCELED; break;
+    }
     unsigned char ch;
     ssize_t r=read(0,&ch,1);
     if (r<0 && errno==EINTR) continue;
+    if (r<0 && (errno==EAGAIN || errno==EWOULDBLOCK)) { usleep(10000); continue; }
     if (r!=1) { result=-EIO; break; }
     if (ch==3) { result=-ECANCELED; break; }
     if (ch=='\r' || ch=='\n') break;
@@ -53,6 +65,7 @@ static int line(const char *prompt, char *out, size_t cap, int secret)
   out[used]=0;
   /* Flush leftover CRLF or overlong input, never leave a key as an NSH command. */
   tcflush(0,TCIFLUSH);
+  if (fcntl(0,F_SETFL,flags) && !result) result=-errno;
   if (tcsetattr(0,TCSANOW,&old) && !result) result=-errno;
   putchar('\n'); fflush(stdout);
 done:

@@ -1,5 +1,5 @@
 """PTY provisioning test; synthetic credential only, never a live API call."""
-import json, os, pty, select, subprocess, sys, time
+import json, os, pty, select, signal, subprocess, sys, termios, time
 binary, directory = sys.argv[1:]
 def run(provider, model, key):
     master, slave = pty.openpty()
@@ -32,3 +32,23 @@ assert cfg['model']=='deepseek-flash' and cfg['llm_host']=='api.deepseek.com'
 cfg=run(b'2',b'custom-mimo-next',b'host-test-secret-456')
 assert cfg['model']=='custom-mimo-next' and cfg['llm_host']=='api.xiaomimimo.com'
 print('PTY setup: both providers, default/custom model, hidden key and encrypted JSON passed')
+for interrupt in ('byte','signal'):
+    master,slave=pty.openpty()
+    original=termios.tcgetattr(slave)
+    proc=subprocess.Popen([binary],stdin=slave,stdout=slave,stderr=slave)
+    transcript=bytearray()
+    for prompt in (b'Provider [',b'Model name [',b'API key (hidden):'):
+        limit=time.monotonic()+10
+        while prompt not in transcript:
+            assert time.monotonic()<limit
+            if select.select([master],[],[],0.1)[0]:
+                transcript.extend(os.read(master,4096))
+        if prompt!=b'API key (hidden):': os.write(master,b'\n')
+    os.write(master,b'partial-secret')
+    time.sleep(0.05)
+    if interrupt=='byte': os.write(master,b'\x03')
+    else: os.kill(proc.pid,signal.SIGINT)
+    assert proc.wait(timeout=10)==1
+    assert termios.tcgetattr(slave)==original
+    os.close(slave); os.close(master)
+print('Ctrl+C byte/signal cancellation restores terminal state')
