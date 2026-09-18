@@ -15,6 +15,8 @@
 
 构建前恢复点：上级 `a733-before-usb-audio-work.bundle`。
 
+构建问题记录：第一轮构建脚本的 staging 清单漏掉 `a733_usb_camera.c`，因此构建 exit=0 不证明 USB 改动被编译。已补入清单；该文件仍按原有 EXIT trap 备份/恢复。必须在新内核中核验新增诊断字符串，之后才能提供实机诊断镜像。
+
 ## 已确认的代码状态
 
 - 官方 `packages/ai_agent/src/voice/audio_capture.c` 使用 `media_recorder`，忽略传入的设备路径，由媒体框架路由。不能传入一个 USB 设备名就得到音频。

@@ -19,6 +19,7 @@ files=(
   vendor/allwinnertech/chips/a733/a733_boot.c
   vendor/allwinnertech/chips/a733/a733_hwdiag.c
   vendor/allwinnertech/chips/a733/a733_wifi_usb.c
+  vendor/allwinnertech/chips/a733/a733_usb_camera.c
   vendor/allwinnertech/chips/a733/CMakeLists.txt
   vendor/allwinnertech/chips/a733/Kconfig
   vendor/allwinnertech/chips/a733/include/chip.h
