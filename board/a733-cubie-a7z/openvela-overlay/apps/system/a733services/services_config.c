@@ -42,7 +42,7 @@ static int path_for(const char *name, char path[96])
 {
   if (strcmp(name, "wifi.profile") && strcmp(name, "ftp.auth") &&
       strcmp(name, "ssh.auto") && strcmp(name, "ftp.auto") &&
-      strcmp(name, "wifi.auto")) return -EINVAL;
+      strcmp(name, "wifi.auto") && strcmp(name, "agent.auto")) return -EINVAL;
   return snprintf(path, 96, "%s/%s", A733_CONFIG_DIR, name) < 96 ? 0 : -ENAMETOOLONG;
 }
 
@@ -148,7 +148,7 @@ bool a733_auto_enabled(const char *service)
   snprintf(name, sizeof(name), "%s.auto", service);
   int ret = a733_config_read(name, &enabled, sizeof(enabled));
   /* SSH/FTP are opt-in. Wi-Fi remembers the next successful connection. */
-  if (ret == -ENOENT) return strcmp(service, "wifi") == 0;
+  if (ret == -ENOENT) return !strcmp(service, "wifi") || !strcmp(service, "agent");
   return ret == 0 && enabled == 1;
 }
 
@@ -166,7 +166,8 @@ int a733_auto_option(const char *service, const char *option)
   char name[24];
   uint8_t enabled;
   int ret;
-  if (strcmp(service, "ssh") && strcmp(service, "ftp") && strcmp(service, "wifi"))
+  if (strcmp(service, "ssh") && strcmp(service, "ftp") && strcmp(service, "wifi") &&
+      strcmp(service, "agent"))
     return -EINVAL;
   if (strcmp(option, "status") == 0)
     {

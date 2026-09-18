@@ -26,6 +26,8 @@ files=(
   vendor/allwinnertech/boards/a733/cubie-a7z/configs/nsh/defconfig
   apps/system/a733wifi/a733wifi_main.c
   apps/system/a733wifi/Kconfig
+  apps/system/a733services/a733services_main.c
+  apps/system/a733services/services_config.c
 )
 patched_files=(
   nuttx/arch/arm64/include/arch.h
@@ -125,6 +127,8 @@ patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
   < "$team_dir/patches/ai-agent-a733-pet-channel.patch"
 patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
   < "$team_dir/patches/ai-agent-http-completion.patch"
+patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
+  < "$team_dir/patches/ai-agent-single-instance.patch"
 
 cd "$official"
 export PATH="$official/prebuilts/build-tools/linux-x86_64/bin:$official/prebuilts/gcc/linux-x86_64/aarch64-none-elf/bin:$official/prebuilts/tools/linux-x86_64:$official/prebuilts/tools/cmake/bin:$official/prebuilts/tools/ninja:/usr/bin:/bin:${PATH:-}"

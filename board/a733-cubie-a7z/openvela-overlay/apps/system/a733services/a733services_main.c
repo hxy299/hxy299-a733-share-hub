@@ -35,6 +35,9 @@ int main(int argc, char **argv)
       if (a733_auto_enabled("ssh")) a733_spawn_service("sshd", "--service");
       if (a733_auto_enabled("ftp")) a733_spawn_service("ftpd", "--service");
       if (a733_auto_enabled("wifi")) a733_spawn_service("wifi", "--autoconnect");
+#ifdef CONFIG_EXAMPLES_AI_AGENT_VELA
+      if (a733_auto_enabled("agent")) a733_spawn_service("aipet", "--boot");
+#endif
       return 0;
     }
   if (argc == 2 && !strcmp(argv[1], "status"))
@@ -42,11 +45,12 @@ int main(int argc, char **argv)
       a733_auto_option("ssh", "status");
       a733_auto_option("ftp", "status");
       a733_auto_option("wifi", "status");
+      a733_auto_option("agent", "status");
     }
   else if (argc == 3) ret = a733_auto_option(argv[1], argv[2]);
   else
     {
-      puts("service status | service <ssh|ftp|wifi> <on|off|status>\n"
+      puts("service status | service <ssh|ftp|wifi|agent> <on|off|status>\n"
            "Only changes boot policy; use sshd/ftpd/wifi for current operations.");
       return 1;
     }

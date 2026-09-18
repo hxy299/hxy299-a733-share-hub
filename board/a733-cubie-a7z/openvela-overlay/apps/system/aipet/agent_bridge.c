@@ -7,12 +7,42 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #define PET_TEXT_MAX 4096
 /* Process lifetime storage: official unregister does not join in-flight taps. */
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static int attached, pending, ready, result;
 static int cancelled;
+/* No automatic restart after teardown: official thread joins are not audited. */
+static int lifecycle, owner = -1, lifecycle_error;
+
+int aipet_agent_claim(void)
+{
+  pthread_mutex_lock(&lock);
+  int status = lifecycle ? -EBUSY : 0;
+  if (!status) { lifecycle = 1; owner = getpid(); lifecycle_error = 0; }
+  pthread_mutex_unlock(&lock);
+  return status;
+}
+
+void aipet_agent_finish(int status)
+{
+  pthread_mutex_lock(&lock);
+  lifecycle = status ? 3 : 4;
+  lifecycle_error = status;
+  owner = -1;
+  pthread_mutex_unlock(&lock);
+}
+
+void aipet_agent_status(int *phase, int *pid, int *error)
+{
+  pthread_mutex_lock(&lock);
+  *phase = attached ? 2 : lifecycle;
+  *pid = owner;
+  *error = lifecycle_error;
+  pthread_mutex_unlock(&lock);
+}
 static uint64_t sequence, started, deadline, finished;
 static char chat_id[64], response[PET_TEXT_MAX + 1];
 
