@@ -58,3 +58,13 @@ aipet ask "请只回答：启动测试成功"
 ## 构建错误记录
 
 首轮新增启动模块编译失败：`fatal error: cJSON.h: No such file or directory`。原因是应用目标没有继承官方 Agent 的私有 cJSON include 路径；修复为在 aipet 的 CMakeLists 中显式增加 `${NUTTX_APPS_DIR}/netutils/cjson/cJSON`，重新配置并构建。首轮日志保留于 `A733-A7Z-ALL-Files/a733-online-agent-v100-build.log`，重构建日志为 `a733-online-agent-v100-rebuild.log`。
+
+## 最终产物与验证
+
+重构建及打包退出码均为 0。新镜像位于 `A733-A7Z-ALL-Files/openvela-a733-cubie-a7z-sd-online-agent-v100-candidate.img`，大小 2,147,483,648 字节，最终 SHA256：`a41e36567384b03774659d8a9bd45986abd56e48cefbf9a413d43e9f464b7380`。
+
+内核位于 `A733-A7Z-ALL-Files/a733-online-agent-v100-kernel/nuttx.bin`，1,891,608 字节，SHA256：`426b1f435091862094788b898476b29d53ee64ab7b1feb9456e50c5c97fdda8d`，同目录保留 ELF 和 System.map。启动标识 `41 52 4d 64` 正确，符号包含 aipet_startup、aipet_agent_claim、aipet_main、ai_agent_main。
+
+ext4、GPT、内核和 CA 回读校验通过；既有分区 4 末尾未按 2048 扇区对齐提示不代表 GPT 校验错误。官方 Agent 的 7 个临时修改文件、服务管理器的 2 个暂存文件均与构建前备份哈希一致，官方 aipet 暂存目录已撤除。
+
+最终源码恢复快照：`A733-A7Z-ALL-Files/a733-online-agent-v100-final.bundle`。镜像不含私人 Key，v99 未覆盖。自动初始化的运行行为仍等待上文实机验收，不能用构建成功替代板测。
