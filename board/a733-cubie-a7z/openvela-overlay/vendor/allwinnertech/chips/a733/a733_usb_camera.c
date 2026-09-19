@@ -39,6 +39,8 @@
 #define CCU_USB2_SUSPEND         (CCU_BASE + 0x1350)
 #define CCU_USB2_MF              (CCU_BASE + 0x1354)
 #define CCU_USB2_BGR             (CCU_BASE + 0x135c)
+#define CCU_USB2_U3_UTMI         (CCU_BASE + 0x1360)
+#define CCU_USB2_U2_PIPE         (CCU_BASE + 0x1364)
 #define CCU_SERDES_PHY_CFG       (CCU_BASE + 0x13c0)
 #define CCU_SERDES_BGR           (CCU_BASE + 0x13c4)
 #define CCU_RES_DCAP             (CCU_BASE + 0x1a00)
@@ -124,6 +126,10 @@
 #define USB2_ISCR                (USB2_PHY_BASE + 0x00)
 #define USB2_PHYCTL              (USB2_PHY_BASE + 0x10)
 #define USB2_PHYTUNE             (USB2_PHY_BASE + 0x18)
+#define USB2_PHYSTS              (USB2_PHY_BASE + 0x24)
+#define USB2_ISCR_FORCE_ID_MASK  (3u << 14)
+#define USB2_ISCR_FORCE_ID_HOST  (2u << 14)
+#define USB2_ISCR_FORCE_VBUS     (3u << 12)
 #define SERDES_SUBSYS_BASE       UINT64_C(0x06c00000)
 #define SERDES_USB_BGR           (SERDES_SUBSYS_BASE + 0x08)
 #define SERDES_USB_ACLK          (1u << 17)
@@ -135,6 +141,7 @@
 #define COMBO0_CTRL2             (COMBO0_TOP + 0x08)
 #define COMBO0_CTRL3             (COMBO0_TOP + 0x0c)
 #define COMBO0_STATUS            (COMBO0_TOP + 0x900)
+#define COMBO0_PHY_BASE          UINT64_C(0x06c80000)
 #define COMBO_PIPE_CLOCK_MAP     (SERDES_SUBSYS_BASE + 0x6100)
 #define COMBO_PIPE_RX_MAP        (SERDES_SUBSYS_BASE + 0x6104)
 #define XHCI2_BASE               UINT64_C(0x06a00000)
@@ -142,21 +149,42 @@
 #define DWC3_GSNPSID             (XHCI2_BASE + 0xc120)
 #define DWC3_GUSB2PHYCFG0        (XHCI2_BASE + 0xc200)
 #define DWC3_GUSB3PIPECTL0       (XHCI2_BASE + 0xc2c0)
-#define DWC3_APP                 (XHCI2_BASE + 0x10000)
-#define DWC3_PIPE_CLOCK_CONTROL  (XHCI2_BASE + 0x10014)
-#define DWC3_PHY_EXTERNAL_CTRL   (XHCI2_BASE + 0x10020)
 #define DWC3_GCTL_CORESOFTRESET  (1u << 11)
 #define DWC3_GCTL_SOFITPSYNC     (1u << 10)
+#define DWC3_PHYCFG_USBTRDTIM_MASK (0xfu << 10)
+#define DWC3_PHYCFG_USBTRDTIM_8BIT (9u << 10)
+#define DWC3_PHYCFG_ULPI_UTMI    (1u << 4)
+#define DWC3_PHYCFG_PHYIF_16BIT  (1u << 3)
 #define DWC3_PHYCFG_SUSPHY       (1u << 6)
+#define DWC3_PHYCFG_ENBLSLPM     (1u << 8)
+#define DWC3_PHY_SOFT_RESET      (1u << 31)
+#define DWC3_PIPE_SUSPHY         (1u << 17)
 #define DWC3_PHYCFG_PHYSOFTRST   (1u << 31)
 #define XHCI_USBCMD              0x00
 #define XHCI_USBSTS              0x04
+#define XHCI_PAGESIZE            0x08
+#define XHCI_CRCR                0x18
+#define XHCI_DCBAAP              0x30
+#define XHCI_CONFIG              0x38
 #define XHCI_PORT_BASE           0x400
 #define XHCI_PORT_STRIDE         0x10
+#define XHCI_HCSPARAMS2          0x08
+#define XHCI_RTSOFF              0x18
+#define XHCI_RUNTIME_IRQ0        0x20
+#define XHCI_IMAN                0x00
+#define XHCI_ERSTSZ              0x08
+#define XHCI_ERSTBA              0x10
+#define XHCI_ERDP                0x18
 #define XHCI_CMD_RUN             (1u << 0)
 #define XHCI_CMD_RESET           (1u << 1)
 #define XHCI_STS_HALTED          (1u << 0)
 #define XHCI_STS_CNR             (1u << 11)
+#define XHCI_STS_FATAL           ((1u << 2) | (1u << 12))
+#define XHCI_BOOT_SLOTS          8u
+#define XHCI_BOOT_TRBS           64u
+#define XHCI_BOOT_SCRATCH        8u
+#define XHCI_TRB_LINK            (6u << 10)
+#define XHCI_TRB_TOGGLE_CYCLE    (1u << 1)
 #define PORT_CONNECT             (1u << 0)
 #define PORT_ENABLE              (1u << 2)
 #define PORT_POWER               (1u << 12)
@@ -201,6 +229,28 @@ struct uvc_endpoint_s
   uint8_t interval;
 };
 
+struct combo_phy_reg_s
+{
+  uint16_t offset;
+  uint16_t value;
+};
+
+struct a733_xhci_trb_s
+{
+  uint64_t parameter;
+  uint32_t status;
+  uint32_t control;
+};
+
+struct a733_xhci_erst_s
+{
+  uint64_t base;
+  uint32_t size;
+  uint32_t reserved;
+};
+
+#include "a733_combo0_usb_tables.inc"
+
 struct uvc_state_s
 {
   mutex_t lock;
@@ -210,14 +260,32 @@ struct uvc_state_s
   uint8_t caplength;
   uint16_t hciversion;
   uint32_t hcsparams;
+  uint32_t hcsparams2;
   uint32_t usbcmd;
   uint32_t usbsts;
   int xhci_reset;
+  int xhci_start;
+  uint16_t xhci_run_polls;
+  uint16_t xhci_scratchpads;
+  uint32_t xhci_pagesize;
+  uint32_t xhci_rtsoff;
+  uint32_t xhci_config;
+  uint32_t xhci_crcr_before_run;
+  uint32_t xhci_crcr_lo;
+  uint32_t xhci_crcr_hi;
+  uint32_t xhci_dcbaap_lo;
+  uint32_t xhci_dcbaap_hi;
+  uint32_t xhci_erstsz;
+  uint32_t xhci_erdp_lo;
+  uint32_t xhci_mfindex;
   int combo_checkpoint;
+  int phy_reset_checkpoint;
   uint16_t xhci_cnr_polls;
   uint32_t portsc;
   uint32_t ccu_phy;
   uint32_t ccu_hci;
+  uint32_t ccu_u3_utmi;
+  uint32_t ccu_u2_pipe;
   uint32_t pmu;
   uint32_t phy_ctrl;
   uint32_t phy_iscr;
@@ -233,8 +301,8 @@ struct uvc_state_s
   uint32_t dwc3_id;
   uint32_t dwc3_usb2phycfg;
   uint32_t dwc3_usb3pipectl;
-  uint32_t dwc3_app;
-  uint32_t dwc3_phy_external;
+  uint32_t usb2_iscr;
+  uint32_t usb2_physts;
   uint32_t portsc2;
   int typec_checkpoint;
   uint32_t typec_bgr;
@@ -284,6 +352,17 @@ static struct ehci_qh_s g_qh __attribute__((aligned(64)));
 static struct ehci_qtd_s g_qtd[3] __attribute__((aligned(64)));
 static uint8_t g_setup[8] __attribute__((aligned(64)));
 static uint8_t g_config[UVC_CONFIG_MAX] __attribute__((aligned(64)));
+static uint64_t g_xhci_dcbaa[XHCI_BOOT_SLOTS + 1]
+  __attribute__((aligned(64)));
+static uint64_t g_xhci_scratch_array[XHCI_BOOT_SCRATCH]
+  __attribute__((aligned(64)));
+static uint8_t g_xhci_scratch[XHCI_BOOT_SCRATCH][4096]
+  __attribute__((aligned(4096)));
+static struct a733_xhci_trb_s g_xhci_command[XHCI_BOOT_TRBS]
+  __attribute__((aligned(64)));
+static struct a733_xhci_trb_s g_xhci_event[XHCI_BOOT_TRBS]
+  __attribute__((aligned(64)));
+static struct a733_xhci_erst_s g_xhci_erst __attribute__((aligned(64)));
 static char g_report[8192];
 static bool g_registered;
 
@@ -842,9 +921,8 @@ static int usb2_power_on(void)
   putreg32((1u << 31) | (1u << 24) | 5u, CCU_SERDES_PHY_CFG);
   a733_uvc_modifyreg32(RTC_DCXO_SERDES, 0, 1u << 4);
   a733_uvc_modifyreg32(CCU_SERDES_BGR, 0, 1u << 16);
-  a733_uvc_modifyreg32(SERDES_USB_BGR, 0,
-                       SERDES_USB_ACLK | SERDES_USB_HCLK |
-                       SERDES_USB2_PHY_RSTN);
+  a733_uvc_modifyreg32(SERDES_USB_BGR, SERDES_USB2_PHY_RSTN,
+                       SERDES_USB_ACLK | SERDES_USB_HCLK);
 
   /* Apply a real reset edge after all parent clocks are stable. */
 
@@ -867,26 +945,77 @@ static int usb2_power_on(void)
   return OK;
 }
 
-/* Restore the digital reference/PIPE path before HCRST. Register meanings
- * are cross-checked against sun60iw2p1.dtsi and the vendor Combo PHY driver.
- * Keep analog tuning inherited from firmware: do not invent calibration
- * values or reset a PHY whose complete tuning has not been ported yet. */
+static void combo0_write_table(const struct combo_phy_reg_s *table,
+                               size_t count)
+{
+  size_t index;
+
+  for (index = 0; index < count; index++)
+    {
+      putreg16(table[index].value,
+               COMBO0_PHY_BASE + ((uintptr_t)table[index].offset << 1));
+    }
+}
+
+static void combo0_usb_analog_config(void)
+{
+  bool reverse = g_uvc.typec_orientation == 2;
+
+  combo0_write_table(g_combo_phy_common0,
+                     sizeof(g_combo_phy_common0) /
+                     sizeof(g_combo_phy_common0[0]));
+  combo0_write_table(reverse ? g_combo_phy_reverse0 : g_combo_phy_normal0,
+                     reverse ? sizeof(g_combo_phy_reverse0) /
+                               sizeof(g_combo_phy_reverse0[0]) :
+                               sizeof(g_combo_phy_normal0) /
+                               sizeof(g_combo_phy_normal0[0]));
+  combo0_write_table(g_combo_phy_common1,
+                     sizeof(g_combo_phy_common1) /
+                     sizeof(g_combo_phy_common1[0]));
+  combo0_write_table(reverse ? g_combo_phy_reverse1 : g_combo_phy_normal1,
+                     reverse ? sizeof(g_combo_phy_reverse1) /
+                               sizeof(g_combo_phy_reverse1[0]) :
+                               sizeof(g_combo_phy_normal1) /
+                               sizeof(g_combo_phy_normal1[0]));
+  combo0_write_table(g_combo_phy_common2,
+                     sizeof(g_combo_phy_common2) /
+                     sizeof(g_combo_phy_common2[0]));
+}
+
+/* Bring up the complete USB3 reference/PIPE path before xHCI handoff. Register
+ * meanings and analog parameters are cross-checked against the local A733
+ * device tree and vendor Combo PHY driver. */
 
 static int combo0_reference_enable(void)
 {
   unsigned int retry;
   uint32_t value;
 
-  a733_uvc_modifyreg32(COMBO0_CTRL2, 1u << 1, 0);
+  /* The vendor Cadence PHY driver releases USB3P1_USB2P0_PHY_RSTN from
+   * combo0 USB init, after the generic U2 PHY has left SIDDQ.  Do not inherit
+   * a stale bootloader-high value: create the same explicit low-to-high edge
+   * here before configuring the Combo PHY.
+   */
+
+  a733_uvc_modifyreg32(SERDES_USB_BGR, SERDES_USB2_PHY_RSTN, 0);
+  up_udelay(10);
+  a733_uvc_modifyreg32(SERDES_USB_BGR, 0, SERDES_USB2_PHY_RSTN);
+  up_udelay(20);
+
+  a733_uvc_modifyreg32(COMBO0_CTRL2, (1u << 1) | 1u, 0);
   a733_uvc_modifyreg32(COMBO0_CTRL1, 0,
                        (1u << 24) | (1u << 20) | 1u);
   a733_uvc_modifyreg32(COMBO_PIPE_CLOCK_MAP, 0xfu, 0);
   a733_uvc_modifyreg32(COMBO_PIPE_RX_MAP, 0xfu, 0);
   value = g_uvc.typec_orientation == 2 ? (1u << 12) : 0;
   a733_uvc_modifyreg32(COMBO0_CTRL0, 1u << 12, value);
-  a733_uvc_modifyreg32(COMBO0_CTRL0, 0, 1u | (1u << 4));
+  combo0_usb_analog_config();
+  a733_uvc_modifyreg32(COMBO0_CTRL0, 0, 1u);
+  up_udelay(1000);
+  a733_uvc_modifyreg32(COMBO0_CTRL0, 0, 1u << 4);
   a733_uvc_modifyreg32(COMBO0_CTRL3, 0, 1u);
   a733_uvc_modifyreg32(COMBO0_CTRL3, 0x3fu << 4, 1u << 4);
+  a733_uvc_modifyreg32(COMBO0_CTRL0, 0, 1u << 8);
 
   for (retry = 0; retry < 100; retry++)
     {
@@ -898,7 +1027,7 @@ static int combo0_reference_enable(void)
       delay_ms(1);
     }
 
-  syslog(LOG_INFO, "A733 USB combo v104: ctrl=%08lx/%08lx/%08lx/%08lx status=%08lx maps=%08lx/%08lx ready=%u\n",
+  syslog(LOG_INFO, "A733 USB combo v114: ctrl=%08lx/%08lx/%08lx/%08lx status=%08lx maps=%08lx/%08lx ready=%u\n",
          (unsigned long)getreg32(COMBO0_CTRL0),
          (unsigned long)getreg32(COMBO0_CTRL1),
          (unsigned long)getreg32(COMBO0_CTRL2),
@@ -913,26 +1042,37 @@ static void dwc3_usb2_host_init(void)
 {
   uint32_t value;
 
-  /* Mirror sunxi_core_open_phy() from the vendor xhci_sunxi glue before the
-   * generic xHCI driver is allowed to touch its rings.  Do not assert
-   * GCTL.CORESOFTRESET or either PHY soft-reset here.  BL31/U-Boot hands the
-   * A733 controller to us with USBSTS.CNR clear; resetting the DWC3 wrapper
-   * without first bringing up the complete Cadence SuperSpeed PHY makes CNR
-   * remain set forever, even when the attached camera only uses USB2.
-   * The ordinary xHCI HCRST below is the only controller reset required.
+  /* The A733 manual places its application-register aperture at
+   * XHCI2_BASE + 0x00100000, which is the dedicated USB2_PHY_BASE mapping.
+   * Force ID low (host) and VBUS valid high for the SIE there.  A Type-C
+   * receptacle has no legacy ID pin; its TCPC host decision must therefore
+   * be reflected explicitly in this application register.  The legacy
+   * vendor xHCI glue's
+   * +0x10000 APP/PIPE/EXT offsets describe older SoCs and do not control the
+   * A733 PHY.
+   *
+   * This helper only programs the UTMI/host settings.  The caller performs
+   * the core reset after the complete Cadence Combo PHY reports ready.
    */
 
-  a733_uvc_modifyreg32(DWC3_PHY_EXTERNAL_CTRL, 0,
-                       (3u << 1) | (1u << 24) | (1u << 26));
-  a733_uvc_modifyreg32(DWC3_PIPE_CLOCK_CONTROL, 0, 1u << 6);
-  a733_uvc_modifyreg32(DWC3_APP, 0, 3u << 12);
+  a733_uvc_modifyreg32(USB2_ISCR, USB2_ISCR_FORCE_ID_MASK,
+                       USB2_ISCR_FORCE_ID_HOST |
+                       USB2_ISCR_FORCE_VBUS);
 
   /* The A733 DT carries snps,dis_u2_susphy_quirk.  Keep the USB2 PHY awake
    * during attach detection, then select host capability and the vendor
    * SOFITPSYNC requirement.
    */
 
-  a733_uvc_modifyreg32(DWC3_GUSB2PHYCFG0, DWC3_PHYCFG_SUSPHY, 0);
+  /* Honor both USB2 and USB3 suspend quirks in sun60iw2p1.dtsi. */
+
+  a733_uvc_modifyreg32(DWC3_GUSB2PHYCFG0,
+                       DWC3_PHYCFG_SUSPHY | DWC3_PHYCFG_ENBLSLPM |
+                       DWC3_PHYCFG_USBTRDTIM_MASK |
+                       DWC3_PHYCFG_ULPI_UTMI |
+                       DWC3_PHYCFG_PHYIF_16BIT,
+                       DWC3_PHYCFG_USBTRDTIM_8BIT);
+  a733_uvc_modifyreg32(DWC3_GUSB3PIPECTL0, DWC3_PIPE_SUSPHY, 0);
   value = getreg32(DWC3_GCTL);
   value &= ~UINT32_C(0x00003000);
   value |= UINT32_C(0x00001000) | DWC3_GCTL_SOFITPSYNC;
@@ -940,16 +1080,68 @@ static void dwc3_usb2_host_init(void)
   delay_ms(20);
 }
 
-static int xhci2_halt_reset(uintptr_t opbase)
+static int dwc3_host_handoff_validate(uintptr_t opbase)
+{
+  uint32_t id;
+
+  /* The local Linux 5.15 dwc3_core_soft_reset() returns immediately when
+   * current_dr_role is already HOST.  v112 confirmed why: asserting
+   * GCTL.CORESOFTRESET on A733 leaves xHCI CNR set and clears its capability
+   * and runtime windows.  Preserve the clean state produced by the CCU reset
+   * edge and validate it after the U2 and Combo PHYs are ready.  Do not pulse
+   * either DWC3 PHY reset and never issue xHCI HCRST.
+   */
+
+  if (wait_clear(opbase + XHCI_USBSTS, XHCI_STS_CNR, 1000) < 0)
+    {
+      syslog(LOG_ERR,
+             "A733 USB host: preserved handoff CNR timeout gctl=%08lx sts=%08lx\n",
+             (unsigned long)getreg32(DWC3_GCTL),
+             (unsigned long)getreg32(opbase + XHCI_USBSTS));
+      return -ETIMEDOUT;
+    }
+
+  id = getreg32(DWC3_GSNPSID);
+  if (((id & UINT32_C(0xffff0000)) != UINT32_C(0x55330000) &&
+       (id & UINT32_C(0xffff0000)) != UINT32_C(0x33310000)) ||
+      (getreg32(COMBO0_STATUS) & 1u) == 0)
+    {
+      syslog(LOG_ERR,
+             "A733 USB host: preserved handoff lost readiness id=%08lx combo=%08lx\n",
+             (unsigned long)id,
+             (unsigned long)getreg32(COMBO0_STATUS));
+      return -EIO;
+    }
+
+  dwc3_usb2_host_init();
+  syslog(LOG_INFO,
+         "A733 USB PHY v114: reset-free host handoff passed id=%08lx gctl=%08lx u2=%08lx u3=%08lx iscr=%08lx physts=%08lx\n",
+         (unsigned long)id,
+         (unsigned long)getreg32(DWC3_GCTL),
+         (unsigned long)getreg32(DWC3_GUSB2PHYCFG0),
+         (unsigned long)getreg32(DWC3_GUSB3PIPECTL0),
+         (unsigned long)getreg32(USB2_ISCR),
+         (unsigned long)getreg32(USB2_PHYSTS));
+  return OK;
+}
+
+static int xhci2_prepare_halted(uintptr_t opbase)
 {
   uintptr_t command = opbase + XHCI_USBCMD;
   uintptr_t status = opbase + XHCI_USBSTS;
   unsigned int timeout;
 
-  /* xHCI reset is valid before the device-context and transfer rings are
-   * installed.  It is also required after the DWC3 core/PHY reset: until
-   * CNR clears, PORTSC is not a valid view of the physical receiver.
+  /* usb2_power_on() already applied the A733 CCU USB2 reset edge.  v106
+   * hardware logs prove that a second reset through USBCMD.HCRST removes
+   * the complete DWC3/xHCI register aperture.  Retain the clean, halted
+   * CCU-reset state after checking CNR, HALTED and the DWC3 identity.
    */
+
+  if (wait_clear(status, XHCI_STS_CNR, 1000) < 0)
+    {
+      syslog(LOG_ERR, "A733 USB host: handoff CNR timeout\n");
+      return -ETIMEDOUT;
+    }
 
   a733_uvc_modifyreg32(command, XHCI_CMD_RUN, 0);
   for (timeout = 0; timeout < 1000; timeout++)
@@ -970,36 +1162,192 @@ static int xhci2_halt_reset(uintptr_t opbase)
       return -ETIMEDOUT;
     }
 
-  /* HCRST must not be issued while the controller is not ready. */
-
-  if (wait_clear(status, XHCI_STS_CNR, 1000) < 0)
+  for (timeout = 0; timeout < 2; timeout++)
     {
-      syslog(LOG_ERR, "A733 USB host: pre-reset CNR timeout\n");
-      return -ETIMEDOUT;
-    }
-
-  a733_uvc_modifyreg32(command, 0, XHCI_CMD_RESET);
-  if (wait_clear(command, XHCI_CMD_RESET, 1000) < 0)
-    {
-      syslog(LOG_ERR, "A733 USB host: HCRST timeout cmd=%08lx sts=%08lx id=%08lx\n",
-             (unsigned long)getreg32(command),
-             (unsigned long)getreg32(status),
-             (unsigned long)getreg32(DWC3_GSNPSID));
-      return -ETIMEDOUT;
-    }
-
-  for (timeout = 0; timeout < 1000; timeout++)
-    {
-      if ((getreg32(status) & XHCI_STS_CNR) == 0)
+      uint32_t id = getreg32(DWC3_GSNPSID);
+      uint32_t sts = getreg32(status);
+      if ((id & UINT32_C(0xffff0000)) != UINT32_C(0x55330000) &&
+          (id & UINT32_C(0xffff0000)) != UINT32_C(0x33310000))
         {
-          break;
+          syslog(LOG_ERR, "A733 USB host: halted handoff lost MMIO\n");
+          return -EIO;
+        }
+
+      if ((sts & (XHCI_STS_CNR | XHCI_STS_HALTED)) == XHCI_STS_HALTED)
+        {
+          g_uvc.xhci_cnr_polls = timeout + 1;
+          syslog(LOG_INFO,
+                 "A733 USB host: CCU-reset halted handoff passed; HCRST suppressed cmd=%08lx sts=%08lx id=%08lx\n",
+                 (unsigned long)getreg32(command),
+                 (unsigned long)sts, (unsigned long)id);
+          return OK;
         }
 
       delay_ms(1);
     }
 
-  g_uvc.xhci_cnr_polls = timeout < 1000 ? timeout + 1 : timeout;
-  return timeout < 1000 ? OK : -ETIMEDOUT;
+  return -ETIMEDOUT;
+}
+
+static void xhci2_putreg64(uintptr_t address, uint64_t value)
+{
+  /* CRCR requires one naturally aligned 64-bit MMIO transaction on this
+   * ARM64 controller.  v111 split it into two writes and real hardware read
+   * CRCR back as zero even though DCBAAP and ERDP happened to accept it.
+   */
+
+  putreg64(value, address);
+}
+
+static unsigned int xhci2_scratchpad_count(uint32_t hcsparams2)
+{
+  return ((hcsparams2 >> 27) & 0x1fu) |
+         (((hcsparams2 >> 21) & 0x1fu) << 5);
+}
+
+static int xhci2_start_minimal(uintptr_t opbase)
+{
+  uintptr_t runtime;
+  uintptr_t interrupter;
+  uintptr_t command = opbase + XHCI_USBCMD;
+  uintptr_t status = opbase + XHCI_USBSTS;
+  uintptr_t command_pa;
+  uintptr_t event_pa;
+  uintptr_t erst_pa;
+  uintptr_t dcbaa_pa;
+  unsigned int slots;
+  unsigned int scratchpads;
+  unsigned int timeout;
+  unsigned int index;
+
+  g_uvc.hcsparams2 = getreg32(XHCI2_BASE + XHCI_HCSPARAMS2);
+  g_uvc.xhci_pagesize = getreg32(opbase + XHCI_PAGESIZE);
+  g_uvc.xhci_rtsoff = getreg32(XHCI2_BASE + XHCI_RTSOFF) & ~0x1fu;
+  scratchpads = xhci2_scratchpad_count(g_uvc.hcsparams2);
+  g_uvc.xhci_scratchpads = scratchpads;
+  if ((g_uvc.xhci_pagesize & 1u) == 0 ||
+      g_uvc.xhci_rtsoff == 0 || scratchpads > XHCI_BOOT_SCRATCH)
+    {
+      syslog(LOG_ERR,
+             "A733 xHCI v114: unsupported page=%08lx rtsoff=%08lx scratch=%u\n",
+             (unsigned long)g_uvc.xhci_pagesize,
+             (unsigned long)g_uvc.xhci_rtsoff, scratchpads);
+      return -ENOTSUP;
+    }
+
+  slots = g_uvc.hcsparams & 0xffu;
+  if (slots > XHCI_BOOT_SLOTS)
+    {
+      slots = XHCI_BOOT_SLOTS;
+    }
+
+  if (slots == 0)
+    {
+      return -ENODEV;
+    }
+
+  memset(g_xhci_dcbaa, 0, sizeof(g_xhci_dcbaa));
+  memset(g_xhci_scratch_array, 0, sizeof(g_xhci_scratch_array));
+  memset(g_xhci_command, 0, sizeof(g_xhci_command));
+  memset(g_xhci_event, 0, sizeof(g_xhci_event));
+  memset(&g_xhci_erst, 0, sizeof(g_xhci_erst));
+
+  for (index = 0; index < scratchpads; index++)
+    {
+      memset(g_xhci_scratch[index], 0, sizeof(g_xhci_scratch[index]));
+      g_xhci_scratch_array[index] =
+        (uint64_t)(uintptr_t)g_xhci_scratch[index];
+      up_clean_dcache((uintptr_t)g_xhci_scratch[index],
+                      (uintptr_t)g_xhci_scratch[index] +
+                      sizeof(g_xhci_scratch[index]));
+    }
+
+  if (scratchpads > 0)
+    {
+      g_xhci_dcbaa[0] =
+        (uint64_t)(uintptr_t)g_xhci_scratch_array;
+    }
+
+  /* This A733 flat kernel maps its static low-RAM DMA objects one-to-one;
+   * the existing EHCI path uses the same VA-as-bus-address contract. */
+
+  command_pa = (uintptr_t)g_xhci_command;
+  event_pa = (uintptr_t)g_xhci_event;
+  erst_pa = (uintptr_t)&g_xhci_erst;
+  dcbaa_pa = (uintptr_t)g_xhci_dcbaa;
+  if (((command_pa | event_pa | erst_pa | dcbaa_pa) & 0x3fu) != 0)
+    {
+      return -EFAULT;
+    }
+
+  /* An empty command ring starts with cycle state one.  The Link TRB is
+   * initially cycle zero, like the generic NuttX xHCI ring implementation,
+   * and becomes visible only after commands fill the usable entries. */
+
+  g_xhci_command[XHCI_BOOT_TRBS - 1].parameter = command_pa;
+  g_xhci_command[XHCI_BOOT_TRBS - 1].control =
+    XHCI_TRB_LINK | XHCI_TRB_TOGGLE_CYCLE;
+  g_xhci_erst.base = event_pa;
+  g_xhci_erst.size = XHCI_BOOT_TRBS;
+
+  up_clean_dcache((uintptr_t)g_xhci_dcbaa,
+                  (uintptr_t)g_xhci_dcbaa + sizeof(g_xhci_dcbaa));
+  up_clean_dcache((uintptr_t)g_xhci_scratch_array,
+                  (uintptr_t)g_xhci_scratch_array +
+                  sizeof(g_xhci_scratch_array));
+  up_clean_dcache((uintptr_t)g_xhci_command,
+                  (uintptr_t)g_xhci_command + sizeof(g_xhci_command));
+  up_clean_dcache((uintptr_t)g_xhci_event,
+                  (uintptr_t)g_xhci_event + sizeof(g_xhci_event));
+  up_clean_dcache((uintptr_t)&g_xhci_erst,
+                  (uintptr_t)&g_xhci_erst + sizeof(g_xhci_erst));
+
+  runtime = XHCI2_BASE + g_uvc.xhci_rtsoff;
+  interrupter = runtime + XHCI_RUNTIME_IRQ0;
+  putreg32(slots, opbase + XHCI_CONFIG);
+  xhci2_putreg64(opbase + XHCI_DCBAAP, dcbaa_pa);
+  putreg32(1, interrupter + XHCI_ERSTSZ);
+  xhci2_putreg64(interrupter + XHCI_ERDP, event_pa);
+  xhci2_putreg64(interrupter + XHCI_ERSTBA, erst_pa);
+  xhci2_putreg64(opbase + XHCI_CRCR, command_pa | 1u);
+  g_uvc.xhci_crcr_before_run = getreg32(opbase + XHCI_CRCR);
+  putreg32(0, interrupter + XHCI_IMAN);
+
+  /* RUN is sufficient for polled attach detection.  Leave interrupts and
+   * system-error interrupts disabled until the complete NuttX host driver
+   * owns this controller. */
+
+  putreg32(XHCI_CMD_RUN, command);
+  for (timeout = 0; timeout < 1000; timeout++)
+    {
+      uint32_t sts = getreg32(status);
+      if ((sts & XHCI_STS_FATAL) != 0)
+        {
+          syslog(LOG_ERR,
+                 "A733 xHCI v114: controller fault cmd=%08lx sts=%08lx\n",
+                 (unsigned long)getreg32(command), (unsigned long)sts);
+          return -EIO;
+        }
+
+      if ((sts & (XHCI_STS_CNR | XHCI_STS_HALTED)) == 0)
+        {
+          g_uvc.xhci_run_polls = timeout + 1;
+          syslog(LOG_INFO,
+                 "A733 xHCI v114: running slots=%u scratch=%u page=%08lx rtsoff=%08lx cmd=%08lx sts=%08lx\n",
+                 slots, scratchpads,
+                 (unsigned long)g_uvc.xhci_pagesize,
+                 (unsigned long)g_uvc.xhci_rtsoff,
+                 (unsigned long)getreg32(command), (unsigned long)sts);
+          return OK;
+        }
+
+      delay_ms(1);
+    }
+
+  syslog(LOG_ERR, "A733 xHCI v114: RUN timeout cmd=%08lx sts=%08lx\n",
+         (unsigned long)getreg32(command),
+         (unsigned long)getreg32(status));
+  return -ETIMEDOUT;
 }
 
 static int xhci2_checkpoint(void)
@@ -1041,19 +1389,35 @@ static int xhci2_checkpoint(void)
     }
 
   delay_ms(20);
+
+  /* Open the wrapper clocks and disable PHY suspend before asking the
+   * Combo PHY to become ready, matching DWC3 phy_setup before phy_init. */
+
+  dwc3_usb2_host_init();
   g_uvc.combo_checkpoint = combo0_reference_enable();
   if (g_uvc.combo_checkpoint < 0)
     {
-      syslog(LOG_ERR, "A733 USB host: Combo PHY not ready; HCRST skipped\n");
+      syslog(LOG_ERR, "A733 USB host: Combo PHY not ready; handoff stopped\n");
       return g_uvc.combo_checkpoint;
     }
 
-  dwc3_usb2_host_init();
   opbase = XHCI2_BASE + g_uvc.caplength;
-  g_uvc.xhci_reset = xhci2_halt_reset(opbase);
+  g_uvc.phy_reset_checkpoint = dwc3_host_handoff_validate(opbase);
+  if (g_uvc.phy_reset_checkpoint < 0)
+    {
+      return g_uvc.phy_reset_checkpoint;
+    }
+
+  g_uvc.xhci_reset = xhci2_prepare_halted(opbase);
   if (g_uvc.xhci_reset < 0)
     {
       return g_uvc.xhci_reset;
+    }
+
+  g_uvc.xhci_start = xhci2_start_minimal(opbase);
+  if (g_uvc.xhci_start < 0)
+    {
+      return g_uvc.xhci_start;
     }
 
   /* Give the TCPC and camera time to complete CC attach and PHY debounce. */
@@ -1501,8 +1865,11 @@ static int enumerate(void)
 static void snapshot(void)
 {
   uintptr_t opbase = XHCI2_BASE + g_uvc.caplength;
+  uintptr_t runtime = XHCI2_BASE + g_uvc.xhci_rtsoff;
   g_uvc.ccu_phy = getreg32(CCU_USB2_U2_REF);
   g_uvc.ccu_hci = getreg32(CCU_USB2_MF);
+  g_uvc.ccu_u3_utmi = getreg32(CCU_USB2_U3_UTMI);
+  g_uvc.ccu_u2_pipe = getreg32(CCU_USB2_U2_PIPE);
   g_uvc.pmu = getreg32(CCU_USB2_BGR);
   g_uvc.phy_ctrl = getreg32(USB2_PHYCTL);
   g_uvc.phy_iscr = getreg32(USB2_ISCR);
@@ -1518,8 +1885,8 @@ static void snapshot(void)
   g_uvc.dwc3_id = getreg32(DWC3_GSNPSID);
   g_uvc.dwc3_usb2phycfg = getreg32(DWC3_GUSB2PHYCFG0);
   g_uvc.dwc3_usb3pipectl = getreg32(DWC3_GUSB3PIPECTL0);
-  g_uvc.dwc3_app = getreg32(DWC3_APP);
-  g_uvc.dwc3_phy_external = getreg32(DWC3_PHY_EXTERNAL_CTRL);
+  g_uvc.usb2_iscr = getreg32(USB2_ISCR);
+  g_uvc.usb2_physts = getreg32(USB2_PHYSTS);
   if (g_uvc.caplength >= 0x10 && g_uvc.caplength <= 0x80)
     {
       g_uvc.usbcmd = getreg32(opbase + XHCI_USBCMD);
@@ -1528,6 +1895,19 @@ static void snapshot(void)
       g_uvc.portsc2 = g_uvc.max_ports > 1 ?
                       getreg32(opbase + XHCI_PORT_BASE +
                                XHCI_PORT_STRIDE) : 0;
+      g_uvc.xhci_config = getreg32(opbase + XHCI_CONFIG);
+      g_uvc.xhci_crcr_lo = getreg32(opbase + XHCI_CRCR);
+      g_uvc.xhci_crcr_hi = getreg32(opbase + XHCI_CRCR + 4);
+      g_uvc.xhci_dcbaap_lo = getreg32(opbase + XHCI_DCBAAP);
+      g_uvc.xhci_dcbaap_hi = getreg32(opbase + XHCI_DCBAAP + 4);
+      if (g_uvc.xhci_rtsoff != 0)
+        {
+          g_uvc.xhci_mfindex = getreg32(runtime);
+          g_uvc.xhci_erstsz =
+            getreg32(runtime + XHCI_RUNTIME_IRQ0 + XHCI_ERSTSZ);
+          g_uvc.xhci_erdp_lo =
+            getreg32(runtime + XHCI_RUNTIME_IRQ0 + XHCI_ERDP);
+        }
     }
 }
 
@@ -1537,7 +1917,22 @@ static int probe(void)
 
   nxmutex_lock(&g_uvc.lock);
   g_uvc.xhci_reset = -EAGAIN;
+  g_uvc.xhci_start = -EAGAIN;
+  g_uvc.xhci_run_polls = 0;
+  g_uvc.xhci_scratchpads = 0;
+  g_uvc.xhci_pagesize = 0;
+  g_uvc.xhci_rtsoff = 0;
+  g_uvc.xhci_config = 0;
+  g_uvc.xhci_crcr_before_run = 0;
+  g_uvc.xhci_crcr_lo = 0;
+  g_uvc.xhci_crcr_hi = 0;
+  g_uvc.xhci_dcbaap_lo = 0;
+  g_uvc.xhci_dcbaap_hi = 0;
+  g_uvc.xhci_erstsz = 0;
+  g_uvc.xhci_erdp_lo = 0;
+  g_uvc.xhci_mfindex = 0;
   g_uvc.combo_checkpoint = -EAGAIN;
+  g_uvc.phy_reset_checkpoint = -EAGAIN;
   g_uvc.xhci_cnr_polls = 0;
   g_uvc.portsc = 0;
   g_uvc.portsc2 = 0;
@@ -1587,22 +1982,40 @@ static ssize_t uvc_read(struct file *filep, char *buffer, size_t buflen)
 } while (0)
   APPEND("A733 Cubie A7Z external USB2/xHCI2 UVC checkpoint\n");
   APPEND("controller: xhci=%08lx version=%04x caplen=%u maxports=%u "
-         "hcs=%08lx cmd=%08lx sts=%08lx ports=%08lx/%08lx "
-         "reset=%d cnr-polls=%u checkpoint=%d\n", (unsigned long)XHCI2_BASE,
+         "hcs=%08lx/%08lx cmd=%08lx sts=%08lx ports=%08lx/%08lx "
+         "reset=%d start=%d cnr-polls=%u run-polls=%u checkpoint=%d\n",
+         (unsigned long)XHCI2_BASE,
          g_uvc.hciversion, g_uvc.caplength,
          g_uvc.max_ports,
-         (unsigned long)g_uvc.hcsparams, (unsigned long)g_uvc.usbcmd,
+         (unsigned long)g_uvc.hcsparams,
+         (unsigned long)g_uvc.hcsparams2, (unsigned long)g_uvc.usbcmd,
          (unsigned long)g_uvc.usbsts, (unsigned long)g_uvc.portsc,
          (unsigned long)g_uvc.portsc2,
-         g_uvc.xhci_reset, g_uvc.xhci_cnr_polls,
+         g_uvc.xhci_reset, g_uvc.xhci_start, g_uvc.xhci_cnr_polls,
+         g_uvc.xhci_run_polls,
          g_uvc.checkpoint);
+  APPEND("xhci-runtime-v114: pagesize=%08lx rtsoff=%08lx scratch=%u "
+         "(minimal polled rings, RUN without HCRST)\n",
+         (unsigned long)g_uvc.xhci_pagesize,
+         (unsigned long)g_uvc.xhci_rtsoff, g_uvc.xhci_scratchpads);
+  APPEND("xhci-regs-v114: config=%08lx crcr-pre=%08lx crcr=%08lx:%08lx "
+         "dcbaap=%08lx:%08lx erstsz=%08lx erdp-lo=%08lx mfindex=%08lx\n",
+         (unsigned long)g_uvc.xhci_config,
+         (unsigned long)g_uvc.xhci_crcr_before_run,
+         (unsigned long)g_uvc.xhci_crcr_hi,
+         (unsigned long)g_uvc.xhci_crcr_lo,
+         (unsigned long)g_uvc.xhci_dcbaap_hi,
+         (unsigned long)g_uvc.xhci_dcbaap_lo,
+         (unsigned long)g_uvc.xhci_erstsz,
+         (unsigned long)g_uvc.xhci_erdp_lo,
+         (unsigned long)g_uvc.xhci_mfindex);
   APPEND("dwc3: id=%08lx gctl=%08lx u2cfg=%08lx u3pipe=%08lx "
-         "app=%08lx ext=%08lx pck=%08lx/%08lx PL=%08lx\n",
+         "iscr=%08lx physts=%08lx pck=%08lx/%08lx PL=%08lx\n",
          (unsigned long)g_uvc.dwc3_id, (unsigned long)g_uvc.dwc3_gctl,
          (unsigned long)g_uvc.dwc3_usb2phycfg,
          (unsigned long)g_uvc.dwc3_usb3pipectl,
-         (unsigned long)g_uvc.dwc3_app,
-         (unsigned long)g_uvc.dwc3_phy_external,
+         (unsigned long)g_uvc.usb2_iscr,
+         (unsigned long)g_uvc.usb2_physts,
          (unsigned long)g_uvc.pck_power,
          (unsigned long)g_uvc.pck_status,
          (unsigned long)getreg32(PL_DATA));
@@ -1627,18 +2040,23 @@ static ssize_t uvc_read(struct file *filep, char *buffer, size_t buflen)
          (unsigned long)g_uvc.typec_twi_lcr,
          (g_uvc.typec_drv_bus & (1u << 7)) != 0 ? "SCL-high" : "SCL-low",
          (g_uvc.typec_drv_bus & (1u << 6)) != 0 ? "SDA-high" : "SDA-low");
-  APPEND("clock: u2ref=%08lx suspend=%08lx mf=%08lx bgr=%08lx "
+  APPEND("clock: u2ref=%08lx suspend=%08lx mf=%08lx u3utmi=%08lx "
+         "u2pipe=%08lx bgr=%08lx "
          "phyctrl=%08lx iscr=%08lx line=%lu vbus=%lu ahb=%08lx\n",
          (unsigned long)g_uvc.ccu_phy,
          (unsigned long)g_uvc.suspend_clock,
          (unsigned long)g_uvc.ccu_hci,
+         (unsigned long)g_uvc.ccu_u3_utmi,
+         (unsigned long)g_uvc.ccu_u2_pipe,
          (unsigned long)g_uvc.pmu, (unsigned long)g_uvc.phy_ctrl,
          (unsigned long)g_uvc.phy_iscr,
          (unsigned long)((g_uvc.phy_iscr >> 25) & 3u),
          (unsigned long)((g_uvc.phy_iscr >> 24) & 1u),
          (unsigned long)g_uvc.ahb_master);
-  APPEND("combo-v104: checkpoint=%d (PMA ready required before HCRST)\n",
+  APPEND("combo-v114: checkpoint=%d (late USB2P0 PHY reset release, PMA ready)\n",
          g_uvc.combo_checkpoint);
+  APPEND("phy-handoff-v114: checkpoint=%d (reset-free DWC3 host handoff, forced SIE ID/VBUS)\n",
+         g_uvc.phy_reset_checkpoint);
   APPEND("serdes: cfg=%08lx bgr=%08lx usb-bgr=%08lx rtc=%08lx\n",
          (unsigned long)g_uvc.serdes_clock,
          (unsigned long)g_uvc.serdes_bgr,
