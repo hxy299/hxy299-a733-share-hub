@@ -23,14 +23,20 @@ extern "C" int aipet_main(int argc, char **argv)
     return aipet::routed_ask(argv[2], true, false);
   if (argc == 3 && !std::strcmp(argv[1], "cloud"))
     return aipet::routed_ask(argv[2], false, true);
+  if (argc == 3 && !std::strcmp(argv[1], "tts"))
+    return aipet::uart_tts_control(argv[2]);
+  if (argc == 4 && !std::strcmp(argv[1], "tts") &&
+      !std::strcmp(argv[2], "test"))
+    return aipet::uart_tts_control(argv[2], argv[3]);
   if (argc != 3 || std::strcmp(argv[1], "ask"))
     {
       std::printf("aipet init (one-time online setup via serial/SSH)\n"
                   "aipet ask \"text\" | aipet cancel\n"
                   "aipet route \"text\" (inspect only) | cloud \"text\" (bypass rules)\n"
                   "aipet start | status; service agent on|off|status\n"
+                  "aipet tts status|on|off|test \"text\"\n"
                   "Boot initialization waits for network/time/config.\n"
-                  "Online text integration; microphone/UART output pending.\n");
+                  "Online Agent with optional UART4 TW-TTS output.\n");
       return 1;
     }
   return aipet::routed_ask(argv[2], false, false);

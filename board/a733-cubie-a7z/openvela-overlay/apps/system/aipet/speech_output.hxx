@@ -19,13 +19,11 @@ public:
 class UartSpeechOutput : public SpeechOutput
 {
 public:
-  using Convert = bool (*)(const std::string &, std::string &);
-  UartSpeechOutput(UartTts &port, Convert convert) : port_(port), convert_(convert) {}
+  explicit UartSpeechOutput(UartTts &port) : port_(port) {}
   int speak(const std::string &utf8) override;
   int stop() override; /* Protocol stop command is not yet verified. */
 private:
   UartTts &port_;
-  Convert convert_;
 };
 
 /* Reserved adapter contract, not an enabled I2S driver. Synthesis corresponds

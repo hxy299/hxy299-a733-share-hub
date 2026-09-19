@@ -16,5 +16,7 @@ int a733_usb_camera_initialize(void);
 int a733_sdmmc0_initialize(void);
 int a733_header_peripherals_initialize(void);
 int a733_npu_initialize(void);
+int a733_uart4_initialize(void);
+int a733_i2s0_audio_initialize(void);
 
 #endif

@@ -133,6 +133,20 @@ int board_app_initialize(uintptr_t arg)
          ret < 0 ? "failed" : "ready", ret);
 #endif
 
+#ifdef CONFIG_A733_UART4
+  ret = a733_uart4_initialize();
+  syslog(ret < 0 ? LOG_ERR : LOG_INFO,
+         "A733: UART4 TW-TTS port %s (%d)\n",
+         ret < 0 ? "failed" : "ready at /dev/ttyS4", ret);
+#endif
+
+#ifdef CONFIG_A733_I2S0_AUDIO
+  ret = a733_i2s0_audio_initialize();
+  syslog(ret < 0 ? LOG_ERR : LOG_INFO,
+         "A733: I2S0 audio checkpoint %s (%d)\n",
+         ret < 0 ? "failed" : "ready at /dev/a733-audio", ret);
+#endif
+
 #if defined(CONFIG_A733_HEADER_I2C) || defined(CONFIG_A733_HEADER_SPI) || \
     defined(CONFIG_A733_FAN_PWM)
   ret = a733_header_peripherals_initialize();

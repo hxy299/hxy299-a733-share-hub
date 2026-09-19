@@ -42,6 +42,14 @@ if(CONFIG_A733_HEADER_I2C OR CONFIG_A733_HEADER_SPI OR CONFIG_A733_FAN_PWM)
   list(APPEND SRCS a733_header_peripherals.c)
 endif()
 
+if(CONFIG_A733_UART4)
+  list(APPEND SRCS a733_uart4.c)
+endif()
+
+if(CONFIG_A733_I2S0_AUDIO)
+  list(APPEND SRCS a733_i2s0_audio.c)
+endif()
+
 if(CONFIG_ARCH_EARLY_PRINT)
   list(APPEND SRCS a733_lowputc.S)
 endif()

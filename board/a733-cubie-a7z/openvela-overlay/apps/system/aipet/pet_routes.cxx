@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "pet_routes.hxx"
 #include "agent_bridge.h"
+#include "speech_output.hxx"
 #include <cJSON.h>
 #include <cerrno>
 #include <cstdio>
@@ -12,6 +13,10 @@
 #include <unistd.h>
 
 namespace aipet {
+static const char *const uart_tts_marker=
+  "/data/ai_agent/config/uart_tts.enabled";
+static UartTts uart_tts("/dev/ttyS4");
+static UartSpeechOutput uart_speech(uart_tts);
 static pthread_mutex_t backend_lock=PTHREAD_MUTEX_INITIALIZER;
 static LocalRouteBackend local_backend=nullptr;
 void set_local_route_backend(LocalRouteBackend backend)
@@ -139,7 +144,10 @@ public:
   std::string expand_template(const std::string &s) override { return expand_clock_template(s); }
   bool present(const Reply &r) override {
     printf("%s\n[emotion=%s actions=%zu]\n",r.text.c_str(),r.emotion.c_str(),r.actions.size());
-    /* UART/display/actuator outputs stay unbound until hardware validation. */
+    if (!inspect && access(uart_tts_marker,F_OK)==0) {
+      const int result=uart_speech.speak(r.text);
+      if (result<0) printf("aipet: UART TTS failed %d\n",result);
+    }
     return true;
   }
   void return_idle() override {}
@@ -169,4 +177,37 @@ int routed_ask(const char *text,bool inspect,bool force_cloud)
   }
   return turn.ok?0:1;
 }
+
+int uart_tts_control(const char *command,const char *text)
+{
+  if (!command || !strcmp(command,"status")) {
+    const auto &s=uart_tts.status();
+    printf("uart-tts: %s device=/dev/ttyS4 baud=9600 encoding=utf8 "
+           "initialized=%d frames=%u failures=%u last=%d\n",
+           access(uart_tts_marker,F_OK)==0?"on":"off",s.initialized,
+           s.frames,s.failures,s.last_errno);
+    return 0;
+  }
+  if (!strcmp(command,"on")) {
+    FILE *f=fopen(uart_tts_marker,"wb");
+    if (!f) { printf("aipet: enable UART TTS failed %d\n",errno); return 1; }
+    fputs("enabled\n",f); fclose(f);
+    puts("UART TTS enabled; Agent replies will be spoken on /dev/ttyS4.");
+    return 0;
+  }
+  if (!strcmp(command,"off")) {
+    if (unlink(uart_tts_marker)<0 && errno!=ENOENT) {
+      printf("aipet: disable UART TTS failed %d\n",errno); return 1;
+    }
+    uart_tts.reset(); puts("UART TTS disabled."); return 0;
+  }
+  if (!strcmp(command,"test") && text && *text) {
+    int result=uart_speech.speak(text);
+    printf("uart-tts test: %s (%d)\n",result==0?"frame sent":"failed",result);
+    return result==0?0:1;
+  }
+  puts("usage: aipet tts status|on|off|test \"text\"");
+  return 1;
+}
+
 }

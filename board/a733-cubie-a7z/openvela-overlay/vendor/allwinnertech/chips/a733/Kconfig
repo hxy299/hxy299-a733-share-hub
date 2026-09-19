@@ -138,4 +138,22 @@ config A733_FAN_PWM
 		does not start the fan waveform until PWMIOC_SETCHARACTERISTICS and
 		PWMIOC_START are issued.
 
+config A733_UART4
+	bool "Cubie A7Z header UART4 for TW-TTS"
+	default y
+	depends on ARCH_CHIP_A733
+	---help---
+		Expose the official A733 UART4 PJ24/PJ25 header mapping as
+		/dev/ttyS4 at 9600 8N1.  The initial driver uses bounded polling,
+		which is sufficient for the low-rate TW-TTS command protocol.
+
+config A733_I2S0_AUDIO
+	bool "Cubie A7Z I2S0 MAX98357A/INMP441 checkpoint"
+	default y
+	depends on ARCH_CHIP_A733
+	---help---
+		Register /dev/a733-audio with a non-destructive I2S0 register and
+		wiring checkpoint.  Active PCM playback/capture remains disabled
+		until the A733 audio PLL rate is validated on the board.
+
 endif

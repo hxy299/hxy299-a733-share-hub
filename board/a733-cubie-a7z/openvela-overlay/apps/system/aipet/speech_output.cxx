@@ -14,10 +14,7 @@ static bool valid_text(const std::string &text)
 int UartSpeechOutput::speak(const std::string &utf8)
 {
   if (!valid_text(utf8)) return -EINVAL;
-  if (!convert_) return -ENOSYS;
-  std::string encoded;
-  if (!convert_(utf8, encoded)) return -EILSEQ;
-  if (port_.speak_gb2312(encoded, 5, 5, 5)) return 0;
+  if (port_.speak_utf8(utf8, 5, 5, 5)) return 0;
   const int error = port_.status().last_errno;
   return -(error ? error : EIO);
 }
@@ -30,17 +27,18 @@ int PcmSpeechOutput::speak(const std::string &text)
   if (!ops_.synthesize || !ops_.play) return -ENODEV;
   /* Reserved bounded whole-utterance path. Long or streaming audio needs a
    * later chunked adapter, not silent truncation to this buffer. */
-  try
-    {
-      std::vector<unsigned char> pcm(320000); /* 10 s at 16kHz/s16/mono */
-      std::size_t length = 0;
-      int result = ops_.synthesize(ops_.context, text.c_str(), pcm.data(),
-                                   pcm.size(), &length);
-      if (result != 0) return result;
-      if (!length || length > pcm.size() || (length & 1)) return -EMSGSIZE;
-      return ops_.play(ops_.context, pcm.data(), length, 16000, 1, 16);
-    }
-  catch (const std::bad_alloc &) { return -ENOMEM; }
+  constexpr std::size_t capacity = 320000; /* 10 s at 16kHz/s16/mono */
+  unsigned char *pcm = new (std::nothrow) unsigned char[capacity];
+  if (!pcm) return -ENOMEM;
+  std::size_t length = 0;
+  int result = ops_.synthesize(ops_.context, text.c_str(), pcm, capacity,
+                               &length);
+  if (result == 0 && (!length || length > capacity || (length & 1)))
+    result = -EMSGSIZE;
+  if (result == 0)
+    result = ops_.play(ops_.context, pcm, length, 16000, 1, 16);
+  delete[] pcm;
+  return result;
 }
 
 int PcmSpeechOutput::stop()

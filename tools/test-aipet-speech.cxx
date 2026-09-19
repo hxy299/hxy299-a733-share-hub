@@ -28,8 +28,8 @@ int main()
   mock.length = 320002; assert(pcm.speak("你好") == -EMSGSIZE && mock.calls == 1);
   assert(pcm.stop() == 0);
   aipet::UartTts uart("/dev/console");
-  aipet::UartSpeechOutput speech(uart,nullptr);
-  assert(speech.speak("你好") == -ENOSYS && speech.stop() == -ENOSYS);
+  aipet::UartSpeechOutput speech(uart);
+  assert(speech.speak("你好") == -EINVAL && speech.stop() == -ENOSYS);
   assert(speech.speak("") == -EINVAL);
   std::cout << "speech output contracts passed (mock PCM; I2S disabled)\n";
 }

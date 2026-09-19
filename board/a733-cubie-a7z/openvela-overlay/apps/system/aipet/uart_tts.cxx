@@ -2,30 +2,22 @@
 #include "uart_tts.hxx"
 #include <cerrno>
 #include <fcntl.h>
-#include <poll.h>
 #include <termios.h>
 #include <unistd.h>
 #include <chrono>
 
 namespace aipet
 {
-bool tts_text_frame(const std::string &text, std::vector<std::uint8_t> &frame)
+bool tts_text_frame(const std::string &text, std::uint8_t encoding,
+                    std::vector<std::uint8_t> &frame)
 {
   frame.clear();
-  if (text.empty() || text.size() > 4094 || text.find('\0') != std::string::npos)
+  if (text.empty() || text.size() > 4094 || text.find('\0') != std::string::npos ||
+      (encoding != 0x00 && encoding != 0x04))
     return false;
-  /* Reject invalid GB2312 instead of silently speaking mojibake. */
-  for (std::size_t i = 0; i < text.size(); ++i)
-    {
-      const auto c = static_cast<unsigned char>(text[i]);
-      if (c < 128) continue;
-      if (c < 0xa1 || c > 0xf7 || ++i == text.size()) return false;
-      const auto d = static_cast<unsigned char>(text[i]);
-      if (d < 0xa1 || d > 0xfe) return false;
-    }
   const auto length = text.size() + 2;
   frame = {0xfd, static_cast<std::uint8_t>(length >> 8),
-           static_cast<std::uint8_t>(length), 1, 0};
+           static_cast<std::uint8_t>(length), 1, encoding};
   frame.insert(frame.end(), text.begin(), text.end());
   return true;
 }
@@ -50,12 +42,6 @@ bool UartTts::write_frame(int fd, const std::vector<std::uint8_t> &frame)
     {
       if (std::chrono::steady_clock::now() >= deadline)
         { errno = ETIMEDOUT; return false; }
-      pollfd pfd{fd, POLLOUT, 0};
-      const int ready = poll(&pfd, 1, 100);
-      if (ready < 0) { if (errno == EINTR) continue; return false; }
-      if (!ready) continue;
-      if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
-        { errno = EIO; return false; }
       const auto written = write(fd, frame.data() + sent, frame.size() - sent);
       if (written < 0)
         { if (errno == EINTR || errno == EAGAIN) continue; return false; }
@@ -66,10 +52,11 @@ bool UartTts::write_frame(int fd, const std::vector<std::uint8_t> &frame)
   return true;
 }
 
-bool UartTts::speak_gb2312(const std::string &text, int volume, int speed, int tone)
+bool UartTts::speak_utf8(const std::string &text, int volume, int speed, int tone)
 {
   std::vector<std::uint8_t> speech;
-  if (!tts_text_frame(text, speech) || device_.compare(0, 5, "/dev/") != 0 ||
+  if (!tts_text_frame(text, 0x04, speech) ||
+      device_.compare(0, 5, "/dev/") != 0 ||
       device_ == "/dev/console" || device_ == "/dev/ttyS0" ||
       device_.find("..") != std::string::npos)
     { ++status_.failures; status_.last_errno = EINVAL; return false; }

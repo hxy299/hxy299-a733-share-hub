@@ -6,9 +6,10 @@
 
 namespace aipet
 {
-/* TW-TTS protocol, identical to vision-4. Payload must already be GB2312:
- * never send UTF-8 under the module's GB2312 encoding selector. */
-bool tts_text_frame(const std::string &gb2312, std::vector<std::uint8_t> &frame);
+/* TW-TTS protocol, identical to the validated Linux implementation.
+ * Encoding 0x04 is the module's native UTF-8 selector. */
+bool tts_text_frame(const std::string &text, std::uint8_t encoding,
+                    std::vector<std::uint8_t> &frame);
 bool tts_parameter_frame(char parameter, int level,
                          std::vector<std::uint8_t> &frame);
 
@@ -26,7 +27,7 @@ class UartTts
 {
 public:
   explicit UartTts(std::string device) : device_(std::move(device)) {}
-  bool speak_gb2312(const std::string &text, int volume, int speed, int tone);
+  bool speak_utf8(const std::string &text, int volume, int speed, int tone);
   void reset() { status_.initialized = false; }
   const TtsStatus &status() const { return status_; }
 private:
