@@ -7,7 +7,7 @@
 ## 当前个人协作阶段
 
 - 当前分支：`a733-cubie-a7z-share`。
-- 当前推送目标：个人公开仓库 `hxy299/openvela-hxy299-share-hub` 的 `share` 远端。
+- 当前推送目标：个人公开仓库 `hxy299/hxy299-a733-share-hub` 的 `share` 远端。
 - manifest 和 README 的 `repo init` 命令暂时指向个人仓库，便于队友同步开发。
 - 不向组委会 `origin` 推送；不创建正式比赛 PR。
 

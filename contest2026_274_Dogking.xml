@@ -13,7 +13,7 @@
   <remote name="dogking-share" fetch="https://github.com/"/>
 
   <project path="contest2026_274_Dogking"
-           name="hxy299/openvela-hxy299-share-hub"
+           name="hxy299/hxy299-a733-share-hub"
            remote="dogking-share"
            revision="a733-cubie-a7z-share">
     <!-- A733/Cubie A7Z board and chip implementation. -->

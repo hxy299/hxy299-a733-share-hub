@@ -105,7 +105,7 @@ mkdir -p ~/openvela-contest
 cd ~/openvela-contest
 
 repo init \
-  -u https://github.com/hxy299/openvela-hxy299-share-hub.git \
+  -u https://github.com/hxy299/hxy299-a733-share-hub.git \
   -b a733-cubie-a7z-share \
   -m contest2026_274_Dogking.xml
 repo sync -c -j8
