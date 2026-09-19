@@ -19,8 +19,10 @@ cleanup()
 trap cleanup EXIT
 
 test -f "$image"
-dd if="$image" of="$rootfs_image" bs="$sector_size" \
-  skip="$rootfs_first_lba" count="$rootfs_sectors" status=none
+dd if="$image" of="$rootfs_image" bs=1M \
+  iflag=skip_bytes,count_bytes \
+  skip="$((rootfs_first_lba * sector_size))" \
+  count="$((rootfs_sectors * sector_size))" status=none
 e2fsck -fn "$rootfs_image"
 debugfs -R "dump /boot/openvela/a733/Image $embedded_kernel" \
   "$rootfs_image" >/dev/null 2>&1

@@ -52,8 +52,10 @@ minimum_bytes=$(((rootfs_first_lba + rootfs_sectors) * sector_size))
 }
 
 echo "Extracting openvela partition..."
-dd if="$base_image" of="$rootfs_image" bs="$sector_size" \
-  skip="$rootfs_first_lba" count="$rootfs_sectors" status=none
+dd if="$base_image" of="$rootfs_image" bs=1M \
+  iflag=skip_bytes,count_bytes \
+  skip="$((rootfs_first_lba * sector_size))" \
+  count="$((rootfs_sectors * sector_size))" status=none
 e2fsck -fn "$rootfs_image"
 
 debugfs -w -R "rm /boot/openvela/a733/Image" \
@@ -67,8 +69,10 @@ e2fsck -fn "$rootfs_image"
 
 echo "Copying the known-good source image..."
 cp --reflink=auto -- "$base_image" "$output_image"
-dd if="$rootfs_image" of="$output_image" bs="$sector_size" \
-  seek="$rootfs_first_lba" count="$rootfs_sectors" \
+dd if="$rootfs_image" of="$output_image" bs=1M \
+  iflag=count_bytes oflag=seek_bytes \
+  seek="$((rootfs_first_lba * sector_size))" \
+  count="$((rootfs_sectors * sector_size))" \
   conv=notrunc status=none
 
 echo "Kernel SHA256:"

@@ -4,12 +4,31 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 team_dir="$(cd "$script_dir/.." && pwd)"
-workspace_root="$(cd "$team_dir/../.." && pwd)"
-official="$workspace_root/quickly-openvela"
 overlay="$team_dir/board/a733-cubie-a7z/openvela-overlay"
-build="$official/cmake_out/cubie-a7z_nsh_v69_aipet_modelcheck"
-mkdir -p "$team_dir/../build-temp-backups"
-backup="$(mktemp -d "$team_dir/../build-temp-backups/staging.XXXXXX")"
+
+if [[ -n "${OPENVELA_WORKSPACE:-}" ]]; then
+  official="$(cd "$OPENVELA_WORKSPACE" && pwd)"
+elif [[ -d "$team_dir/../nuttx" && -d "$team_dir/../apps" ]]; then
+  # Standard repo-init layout: workspace/contest2026_274_Dogking.
+  official="$(cd "$team_dir/.." && pwd)"
+elif [[ -d "$team_dir/../../quickly-openvela/nuttx" ]]; then
+  # Maintainer layout used while developing this port.
+  official="$(cd "$team_dir/../../quickly-openvela" && pwd)"
+else
+  echo "Cannot locate the openvela workspace." >&2
+  echo "Set OPENVELA_WORKSPACE to the directory containing nuttx/apps/packages." >&2
+  exit 1
+fi
+
+for required in nuttx apps packages vendor; do
+  [[ -d "$official/$required" ]] || {
+    echo "Invalid openvela workspace: missing $official/$required" >&2
+    exit 1
+  }
+done
+
+build="${A733_BUILD_DIR:-$official/cmake_out/cubie-a7z_nsh}"
+backup="$(mktemp -d "${TMPDIR:-/tmp}/a733-build-staging.XXXXXX")"
 
 bash "$script_dir/check-openvela-first.sh"
 
@@ -20,11 +39,16 @@ files=(
   vendor/allwinnertech/chips/a733/a733_hwdiag.c
   vendor/allwinnertech/chips/a733/a733_wifi_usb.c
   vendor/allwinnertech/chips/a733/a733_usb_camera.c
+  vendor/allwinnertech/chips/a733/a733_combo0_usb_tables.inc
+  vendor/allwinnertech/chips/a733/a733_uart4.c
+  vendor/allwinnertech/chips/a733/a733_i2s0_audio.c
   vendor/allwinnertech/chips/a733/CMakeLists.txt
   vendor/allwinnertech/chips/a733/Kconfig
   vendor/allwinnertech/chips/a733/include/chip.h
   vendor/allwinnertech/chips/a733/include/irq.h
+  vendor/allwinnertech/chips/a733/include/a733_peripherals.h
   vendor/allwinnertech/boards/a733/cubie-a7z/configs/nsh/defconfig
+  vendor/allwinnertech/boards/a733/cubie-a7z/src/a7z_boardinit.c
   apps/system/a733wifi/a733wifi_main.c
   apps/system/a733wifi/Kconfig
   apps/system/a733services/a733services_main.c
@@ -53,6 +77,12 @@ case "$aipet_official" in
   "$official"/apps/system/aipetllm) ;;
   *) echo "Refusing unsafe AI Pet staging path: $aipet_official" >&2; exit 1 ;;
 esac
+
+same_path()
+{
+  [[ -e "$1" && -e "$2" ]] || return 1
+  [[ "$(readlink -f "$1")" == "$(readlink -f "$2")" ]]
+}
 
 restore_official()
 {
@@ -92,6 +122,10 @@ trap restore_official EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 for path in "${files[@]}"; do
+  if same_path "$overlay/$path" "$official/$path"; then
+    continue
+  fi
+
   mkdir -p "$backup/$(dirname "$path")"
   if [[ -f "$official/$path" ]]; then
     cp "$official/$path" "$backup/$path"
@@ -111,21 +145,31 @@ done
 patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
   < "$team_dir/patches/nuttx-arm64-a733-aff1-cpuid.patch"
 
-if [[ -d "$aipet_official" ]]; then
+if same_path "$aipet_overlay" "$aipet_official"; then
+  aipet_saved=false
+elif [[ -d "$aipet_official" ]]; then
   mkdir -p "$backup/$(dirname "$aipet_relative")"
   cp -a "$aipet_official" "$backup/$aipet_relative"
+  aipet_saved=true
+  rm -rf "$aipet_official"
+  cp -a "$aipet_overlay" "$aipet_official"
+else
+  aipet_saved=true
+  cp -a "$aipet_overlay" "$aipet_official"
 fi
-aipet_saved=true
 
-rm -rf "$aipet_official"
-cp -a "$aipet_overlay" "$aipet_official"
-
-if [[ -d "$official/apps/system/aipet" ]]; then
+if same_path "$overlay/apps/system/aipet" "$official/apps/system/aipet"; then
+  pet_saved=false
+elif [[ -d "$official/apps/system/aipet" ]]; then
   cp -a "$official/apps/system/aipet" "$backup/apps/system/aipet"
+  pet_saved=true
+  rm -rf "$official/apps/system/aipet"
+  cp -a "$overlay/apps/system/aipet" "$official/apps/system/aipet"
+else
+  pet_saved=true
+  mkdir -p "$official/apps/system"
+  cp -a "$overlay/apps/system/aipet" "$official/apps/system/aipet"
 fi
-pet_saved=true
-rm -rf "$official/apps/system/aipet"
-cp -a "$overlay/apps/system/aipet" "$official/apps/system/aipet"
 patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
   < "$team_dir/patches/ai-agent-a733-pet-channel.patch"
 patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
@@ -151,7 +195,7 @@ else
   # generated directory so defconfig changes (notably CONFIG_SMP) cannot be
   # silently ignored by a stale .config.
   case "$build" in
-    "$official"/cmake_out/cubie-a7z_nsh_v69_aipet_modelcheck)
+    "$official"/cmake_out/*)
       rm -rf "$build"
       ;;
     *)

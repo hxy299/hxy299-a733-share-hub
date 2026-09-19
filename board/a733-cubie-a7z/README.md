@@ -25,6 +25,10 @@
 - `apps/system/a733wifi`：双频 Wi-Fi 交互命令。
 - `apps/system/a733services`：持久化的可选开机服务管理。
 - `apps/system/a733ftpd`：FTP 服务封装。
+- `apps/system/a733npu`：VIP2 NPU ABI v4 用户命令。
+- `apps/system/aipet`：基于官方 Agent 的桌宠路由、初始化和输出适配。
+- `apps/system/aipetllm`：Qwen2.5-1.5B GGUF ARM64 CPU 推理应用。
+- `apps/system/aipetasr`：本地流式 ASR 扩展接口骨架，尚未形成板端识别链路。
 - 其他映射文件：本板适配所需的、逐文件列出的兼容性修改。
 
 权威功能配置文件为：
@@ -41,6 +45,7 @@ openvela-overlay/vendor/allwinnertech/boards/a733/cubie-a7z/configs/nsh/defconfi
 
 ## 完成边界
 
-UART/NSH、内存、SD/GPT/FAT、基础外设、Wi-Fi/网络服务和 VIP2 模型执行已经在
-真机验证。USB UVC、Bluetooth HCI、GPU 和 UFS 尚未完成，不能在外部材料中声称
-这些功能已经完成。
+UART/NSH、8 核 SMP、内存、SD/GPT/FAT、基础外设、Wi-Fi/网络服务、VIP2 模型
+执行、官方 Agent 联网对话和本地 Qwen 基础生成已经在真机验证。UART4 TTS 已
+构建待板测；I2S PCM、USB UAC/UVC、Bluetooth HCI、GPU 和 UFS 尚未完成，不能
+在外部材料中声称这些功能已经完成。

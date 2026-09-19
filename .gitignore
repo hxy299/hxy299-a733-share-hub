@@ -2,6 +2,8 @@
 build/
 out/
 cmake_out/
+archives/
+build-temp-backups/
 *.o
 *.a
 *.elf
@@ -18,6 +20,7 @@ cmake_out/
 *.tar
 *.tar.gz
 *.zip
+*.bundle
 
 # Secrets and local service state
 *.key

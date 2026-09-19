@@ -3,27 +3,28 @@
 大型镜像、NPU 模型、厂商固件和专有工具不存放在 Git 历史中。这样既可
 避免 GitHub 体积限制，也不会重新分发受许可证限制的材料。
 
-## 最新开发镜像
+## 最新可恢复候选镜像
 
 ```text
-名称：openvela-a733-cubie-a7z-sd-openvela-wapi-v67-candidate.img
-大小：2147483648 字节
-SHA-256：51934ef1f1bfc309970d507b8f970d5d4f77628a4fb35426a603c7df867313fe
+名称：openvela-a733-cubie-a7z-sd-audio-uart-v115-candidate.img
+SHA-256：cf25ac887087e5bbad1863258225d2060c3c875706b84686d1ef8cdc6b01c834
 ```
 
-该镜像从已验证的 v66 镜像复制生成，只替换第 3 分区中的 openvela 内核；原镜像
-未被修改。镜像内核的校验值为：
+镜像内嵌内核：
 
 ```text
-大小：1615080 字节
-SHA-256：3f602f2cb25d3a0bf188e93dd93dbae9cdc33e1e50ca3f66d7c9809d0504434f
+SHA-256：2d3af39ada75f72e42f127867637c2643142ec2d949c0117b1c62d8d5df80d08
 ```
 
-`tools/verify-a733-image.sh` 已确认 GPT 无错误、openvela ext4 文件系统无错误，且从
-镜像重新提取的内核与构建产物 SHA-256 完全相同。v67 仍是候选镜像，必须完成
-WAPI/WEXT 真机验收后再标记为发布版。
+对应源码提交为 `002a310`，恢复 bundle SHA-256 为
+`c09167d64ff263d78684012f6c1eca892f2293b019af09a4e1b299940bb266d4`。
+完整交叉构建、ext4、GPT 和内嵌内核一致性校验已经通过。由于当前没有开发板，
+UART4 TW-TTS 实际发声和 I2S0 诊断仍待验证，因此 v115 不是正式发布版。
 
-最终比赛发布版本必须重新构建并验证镜像，将其作为 GitHub Release 资源，
+镜像由已验证可启动的 A733 基础镜像复制后，仅替换第 3 分区中的 openvela 内核；
+基础镜像不会被修改。可重复命令见 `docs/BUILD_AND_IMAGE.md`。
+
+最终比赛发布版本必须重新构建、实机回归并验证镜像，将其作为 GitHub Release 资源，
 同时在本文件中补充下载地址、大小和 SHA-256。
 
 ## 开发期间使用的 NPU 预处理包

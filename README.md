@@ -7,11 +7,13 @@ Allwinner A733（2× Cortex-A76 + 6× Cortex-A55）、4 GiB LPDDR4/4X 和
 3 TOPS VIP2 NPU。本项目不在 Linux 用户空间模拟 openvela，而是由板载
 Boot0/SCP/BL31/U-Boot 直接引导 ARM64 openvela 内核进入 EL1。
 
-当前已经完成可交互 NSH、4 GiB 内存、microSD/GPT/FAT、基础板级外设、
-FCU760K 双频 Wi-Fi、WPA2/DHCP/IPv4、SSH/FTP/curl/wget，以及 VIP2 NPU 上
-LeNet、YOLOv5s、YOLOv8n 的真实硬件推理。外接 USB UVC 摄像头链路处于开发中，
-已定位到 Cadence Combo PHY/xHCI 固件交接后的复位恢复问题，尚不把摄像头采集
-声明为完成。
+当前已经完成可交互 NSH、8 核 SMP、4 GiB 内存、microSD/GPT/FAT、基础板级
+外设、FCU760K 双频 Wi-Fi、WPA2/DHCP/IPv4、SSH/FTP/curl/wget，以及 VIP2 NPU
+上的 LeNet、YOLOv5s、YOLOv8n 真实硬件推理。基于 openvela 官方
+`packages_ai_agent` 的联网桌宠已完成首次加密配置、自启动、DeepSeek/MiMo
+后端和连续中文对话；本地 Qwen2.5-1.5B CPU 推理也已达到基础生成检查点。
+外接 USB 音频/UVC、I2S PCM 和桌宠硬件表现层仍在开发，不把候选代码声明为
+实机完成。
 
 作品面向离线 AI 助手和视觉识别终端：先把 openvela、联网、文件服务和 NPU
 执行环境建立在 A733 上，再打通摄像头输入、YOLOv8 前后处理和结果输出。
@@ -29,7 +31,7 @@ YOLOv8n 六输出和动态输入均已通过真机验证，而不是固定输出
 | --- | --- | --- |
 | ARM64 启动 | 完成 | U-Boot `booti` → BL31 → EL1 → NSH |
 | SMP | 8 核基本验证通过 | 6×A55 + 2×A76，逐核身份/亲和性验证；保留栈页对齐修复 |
-| 本地 Qwen2.5-1.5B | 单轮聊天基本验证通过 | RAM 常驻、持久线程池、28 层前向/连续生成已实测；v95 恢复双 token 基线并正常回答英文 Hello、EOS 停止；独立参考精度、中文、多轮和长稳仍待验收 |
+| 本地 Qwen2.5-1.5B | 基础生成实机通过 | RAM 常驻、6 核工作池、28 层前向、KV cache、中文流式输出和有限多轮已实测；尚未接入桌宠本地回退接口 |
 | 控制台 | 完成 | UART0 115200 8N1，输入、termios、Ctrl+C |
 | 内存/系统 | 完成 | 4 GiB split-region heap、procfs、`free/ps/uptime` |
 | microSD | 完成 | SDMMC0 PIO，12 MHz/4-bit，多块读取 |
@@ -38,6 +40,10 @@ YOLOv8n 六输出和动态输入均已通过真机验证，而不是固定输出
 | Wi-Fi | 完成，v71 长稳通过 | FCU760K 驱动、标准 WEXT/openvela WAPI、2.4/5 GHz 扫描、WPA2、DHCP、DNS |
 | 网络服务 | 完成 | SSH、SCP、FTP、curl、wget、NTP、iperf、可选自启动 |
 | NPU | 完成基线 | VIP2 ABI、MMU/DMA/IRQ，LeNet/YOLOv5/YOLOv8 真机运行 |
+| 官方 AI Agent | 联网对话实机通过 | `packages_ai_agent`、DeepSeek/MiMo、API Key 板级加密、自动启动和连续中文对话 |
+| AI 桌宠路由 | 文字主链路完成 | 快速规则、官方 Agent、回复/表情/动作解析；本地 LLM 注册和硬件表现层待接入 |
+| UART4 TTS | 已构建待板测 | `/dev/ttyS4`、TW-TTS UTF-8、自动播报和故障隔离 |
+| I2S 音频 | 诊断阶段 | MAX98357A/INMP441 引脚与时钟诊断已加入，尚无 PCM lower-half |
 | UVC 摄像头 | 进行中 | Type-C/PHY/xHCI 检查点完成，设备枚举尚未完成 |
 | Bluetooth/GPU/UFS | 待完成 | 不计入当前完成项 |
 
@@ -61,6 +67,10 @@ contest2026_274_Dogking/
 │   │   ├── apps/system/a733wifi/                    # Wi-Fi 管理命令
 │   │   ├── apps/system/a733services/                # 自启动服务管理
 │   │   ├── apps/system/a733ftpd/                    # FTP 服务封装
+│   │   ├── apps/system/a733npu/                     # NPU 用户命令
+│   │   ├── apps/system/aipet/                       # 官方 Agent 桌宠路由
+│   │   ├── apps/system/aipetllm/                    # 本地 Qwen2.5 推理
+│   │   ├── apps/system/aipetasr/                    # 本地 ASR 接口骨架
 │   │   └── apps、nuttx 的必要兼容文件                # 逐文件 manifest 映射
 │   └── README.md                                    # 板级说明
 ├── docs/
@@ -68,7 +78,8 @@ contest2026_274_Dogking/
 │   ├── TEST_EVIDENCE.md                             # 真机验收证据
 │   ├── ARTIFACTS.md                                 # 镜像/模型校验与获取规则
 │   └── UPSTREAM_PLAN.md                             # 公共仓拆分计划
-├── tools/build-a733.sh                              # WSL/Linux 构建入口
+├── patches/                                         # 公共仓可审查兼容补丁
+├── tools/build-a733.sh                              # 完整、可恢复的构建入口
 ├── logs/                                            # 官方工具导出的真实 AI 日志
 ├── contest2026_274_Dogking.xml                      # 仓库 manifest 与 linkfile
 └── openvela.xml                                     # 大赛官方基线 manifest
@@ -79,6 +90,8 @@ Wi-Fi 和其他组件的 NuttX 内核层、openvela 公共组件层及板级私�
 AI 桌宠的产品层强制采用“openvela 官方能力优先”架构，具体 API 选择、Linux 原型
 迁移映射和自动边界检查见
 [`docs/AI_PET_OPENVELA_FIRST_ARCHITECTURE.md`](docs/AI_PET_OPENVELA_FIRST_ARCHITECTURE.md)。
+当前端到端状态和各分支完成边界见
+[`docs/a733/AIPET_CHAIN_OVERVIEW_20260920.md`](docs/a733/AIPET_CHAIN_OVERVIEW_20260920.md)。
 
 模板中的 hello app、quickapp 和示例日志已删除。本作品只使用板级适配形态。
 
@@ -112,15 +125,8 @@ cd ~/openvela-contest
 bash contest2026_274_Dogking/tools/build-a733.sh
 ```
 
-等价的底层命令为：
-
-```bash
-./nuttx/tools/build.sh \
-  vendor/allwinnertech/boards/a733/cubie-a7z/configs/nsh \
-  --cmake \
-  -b cmake_out/cubie-a7z_nsh \
-  -j8
-```
+该入口还会临时应用官方 Agent、readline 和 ARM64 兼容补丁，并在退出时恢复公共
+仓文件；不能用一条裸 `nuttx/tools/build.sh` 等价替代完整产品构建。
 
 增量构建：
 
@@ -138,6 +144,9 @@ cmake_out/cubie-a7z_nsh/System.map
 
 `nuttx.bin` 带 Linux ARM64 Image header，必须由 U-Boot `booti` 启动；不能用
 `go 0x40200000` 进入 AArch64 内核。
+
+完整的依赖、非标准目录变量、镜像封装与独立校验命令见
+[`docs/BUILD_AND_IMAGE.md`](docs/BUILD_AND_IMAGE.md)。
 
 ## 七、SD 卡启动与部署
 
@@ -166,6 +175,10 @@ LABEL openvela A733
 NuttShell (NSH)
 nsh>
 ```
+
+已有基础镜像时，可以使用 `tools/package-a733-kernel-image.sh` 生成一个不覆盖
+原镜像的新候选文件，再用 `tools/verify-a733-image.sh` 检查 ext4、GPT 和内嵌
+内核哈希。具体命令见 `docs/BUILD_AND_IMAGE.md`。
 
 ## 八、上板验收
 
@@ -210,6 +223,19 @@ echo prepared=/data/npu/lenet.a7pm > /dev/npu0
 cat /dev/npu0
 ```
 
+联网桌宠：
+
+```text
+aipet init                     # 仅首次运行
+aipet status
+aipet route "你好"
+aipet ask "请只回答：启动测试成功"
+```
+
+初始化时选择 DeepSeek/MiMo、模型并隐藏输入 API Key。完整桌宠链路与 UART/I2S
+候选测试分别见 `docs/a733/AIPET_CHAIN_OVERVIEW_20260920.md` 和
+`docs/a733/AUDIO_UART_I2S_STAGE.md`。
+
 USB 摄像头当前只能用于诊断，不能作为已完成验收项：
 
 ```text
@@ -246,14 +272,16 @@ AI 辅助的典型闭环：
 
 ## 十一、已知限制和后续计划
 
-1. UVC 摄像头尚未枚举；优先完成保留固件 handoff 的 xHCI ring 初始化，再打通
-   UVC → RGB640 → YOLOv8 → bbox 输出。
+1. 外部 USB 设备尚未枚举；v114 Combo PHY/xHCI ring 是未实机验收候选，后续再
+   打通 UAC/UVC → PCM/frame → ASR/YOLOv8。
 2. Bluetooth HCI、Imagination GPU、UFS 尚未适配。
 3. Wi-Fi 已可用但仍需长稳、断线重连、并发吞吐和 DFS 压测。
 4. NPU 当前采用官方 Linux VIPLite golden trace → A7PM → openvela 执行路线；
    通用 NBG 编译/链接仍依赖官方授权工具。
 5. 公共 `apps`/`nuttx` 兼容修改需要按官方流程拆分并提交对应仓库的
    `dev-ai-contest-2026` PR。
+6. 本地 Qwen 尚未注册到桌宠 `LocalRouteBackend`；UART4 TTS、MAX98357A、
+   INMP441、屏幕表情和动作执行仍需实机与产品层验收。
 
 ## 十二、官方大赛资料
 

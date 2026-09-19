@@ -1,6 +1,6 @@
 # A733 / Cubie A7Z 适配状态
 
-状态日期：2026-09-14。“已通过”表示已在真实的 4 GiB Cubie A7Z 上观察到，
+状态日期：2026-09-20。“已通过”表示已在真实的 4 GiB Cubie A7Z 上观察到，
 而不只是完成编译。
 
 ## 已验证的系统基线
@@ -11,6 +11,8 @@
 - 4 GiB DRAM 通过分区堆区域暴露，同时保留固件预留区域。
 - procfs、`free`、`ps`、`uptime`、`dmesg`、信号和 Ctrl+C 正常。
 - `poweroff` 和 `reboot` 使用开发板/PSCI 路径。
+- 8 核 SMP 已识别 6× Cortex-A55 与 2× Cortex-A76；NSH、Wi-Fi、NPU 与本地
+  LLM 回归通过。启动期多核串口字符交错属于当前诊断输出限制。
 
 ## 已验证的存储与外设
 
@@ -57,6 +59,35 @@ PTK → 安装 GTK → 开放 controlled port → DHCP；并在异步 disconnect
 
 详细边界与验收命令见 `docs/OPENVELA_COMPONENT_BOUNDARIES.md`。
 
+## 已验证的官方 Agent 与文字桌宠
+
+- 使用 openvela 官方 `packages_ai_agent` 的消息总线、上下文、LLM proxy、TLS、
+  Skills 和工具注册机制；产品层 `aipet` 负责桌宠路由和表现接口。
+- `aipet init` 支持 DeepSeek/MiMo、默认或自定义模型、隐藏输入 API Key，并使用
+  板级密钥加密持久化；配置成功后 Agent 开机自启动。
+- 实机连续中文对话通过：首次 TLS 请求约 7.5 秒，连接复用后约 1.8 秒。
+- 快速规则、云端优先、失败转本地接口、UTF-8 校验和回复动作/表情白名单已实现。
+- 本地 LLM 回调尚未注册到产品路由；屏幕、舵机、电机和 LED 只保留安全接口，
+  不宣称硬件动作已经执行。
+
+## 已验证的本地 Qwen2.5-1.5B 基线
+
+- 1.1 GB Q4_K_M GGUF 的元数据、tokenizer、embedding、Q/K/V、RoPE、GQA、
+  28 层 Transformer、LM head、KV cache 和连续生成均已在板端逐阶段验证。
+- 模型可常驻 4 GiB 内存；6 核工作池默认使用 CPU2..7（4×A55 + 2×A76），
+  保留 CPU0..1 给系统。缓存命中后单 token 前向检查点约 0.6 秒。
+- 中文流式输出和有限多轮历史已通过现场测试。独立参考精度、长稳、强制中断
+  清理以及桌宠 `LocalRouteBackend` 接入仍待完成。
+
+## 音频与语音状态
+
+- UART4 `/dev/ttyS4`、PJ24/PJ25、9600 8N1 和 TW-TTS UTF-8 帧已完成代码、
+  主机协议测试和 v115 完整镜像构建，等待实机发声验证。
+- I2S0 的 MAX98357A/INMP441 引脚与时钟资源已确认，`/dev/a733-audio` 只做
+  非破坏诊断；尚未注册 openvela PCM lower-half，也没有播放/采集数据流。
+- 官方云端 ASR 接口和本地 ASR 骨架已经调研/保留，但没有真实麦克风 PCM 输入，
+  因此当前桌宠语音输入链路未完成。
+
 ## 已验证的 VIP2 NPU
 
 - 电源/时钟/复位、IRQ、DMA 内存池、MMU 页表、缓存维护和同步任务 ABI。
@@ -79,11 +110,12 @@ PTK → 安装 GTK → 开放 controlled port → DHCP；并在异步 disconnect
 - 该增量已经完成 AArch64 全量编译与链接；由于本段尚未刷入开发板，所以不把
   ABI v4 的板端行为列入上面的“已通过”清单。
 
-## 进行中的 USB UVC 摄像头
+## 进行中的外部 USB/UAC/UVC
 
-当前源码包含 v65 诊断实现。可以看到 Type-C 状态、USB2 PHY 和 xHCI MMIO，
-但摄像头尚未完成枚举。证据表明，复位 xHCI/DWC3 会破坏厂商固件完成的
-Cadence Combo PHY/PIPE 交接，之后 HCRST/CNR 恢复超时。
+v113 是最后一个取得实机日志的诊断版本，仍未观察到端口连接。v114 候选加入
+Combo PHY USB 表、host/UTMI 设置和最小 xHCI ring，但只有构建证据，没有实机
+日志。USB 麦克风和摄像头均尚未枚举。完整边界见
+`docs/a733/USB_V114_CANDIDATE.md`。
 
 下一实现检查点：
 
@@ -100,7 +132,7 @@ Cadence Combo PHY/PIPE 交接，之后 HCRST/CNR 恢复超时。
 - Imagination BXM GPU 运行时；
 - UFS 主机/存储和 UFS 优先启动；
 - MIPI CSI IMX214 驱动；
-- SMP/DVFS/电源管理的生产级加固；
+- SMP 已基本运行；DVFS、热管理和生产级多核长稳仍待加固；
 - openvela 内通用 NBG 编译器/链接器。
 
 这些项目有意不计入已完成特性声明。
