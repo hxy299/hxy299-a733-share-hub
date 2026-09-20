@@ -37,6 +37,10 @@ build-temp-backups/
 .DS_Store
 Thumbs.db
 
+# Python bytecode from the build/image helper scripts
+__pycache__/
+*.pyc
+
 # AI logs are contest deliverables and must not be ignored.
 !logs/**/*.jsonl
 !logs/**/manifest.json

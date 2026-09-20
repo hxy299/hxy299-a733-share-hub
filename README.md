@@ -25,6 +25,29 @@ Boot0/SCP/BL31/U-Boot 直接引导 ARM64 openvela 内核进入 EL1。
 扩展方向：**AI 硬件产品创新**。A733 VIP2 NPU 已在 openvela 下执行真实模型，
 YOLOv8n 六输出和动态输入均已通过真机验证，而不是固定输出回放。
 
+## 二之二、三个 SoC 平台
+
+本作品是**一次适配三颗国产 SoC**，全部为全新移植（非配置预设）：
+
+| 平台 | SoC | 架构 | 定位 | 详细文档 |
+| --- | --- | --- | --- | --- |
+| Radxa Cubie A7Z | Allwinner A733 | ARM64，8 核 | 主平台：AI 推理 + 网络 + 显示 + 语音 | 本 README 与 `docs/` |
+| Luckfox Lyra Zero W | Rockchip RK3506 | ARMv7-A，单核 Cortex-A7 | 低成本节点 | [RK3506 移植](docs/rockchip/ROCKCHIP_RK3506_LYRA_ZERO.md) |
+| Luckfox Pico Mini | Rockchip RV1103 | ARMv7-A，单核 Cortex-A7 | 极简节点：SPI-NAND 启动 + 相机 | [RV1103 移植](docs/rockchip/ROCKCHIP_RV1103_PICO_MINI.md) |
+
+三套移植的源码分别位于 `board/a733-cubie-a7z/` 与 `board/rockchip/`，
+由根 manifest `contest2026_274_Dogking.xml` 的 `linkfile` 映射到
+openvela 工作树的 `vendor/` 对应位置。
+
+## 二之三、参赛材料
+
+- **技术报告**：[docs/SUBMISSION_TECHNICAL_REPORT.md](docs/SUBMISSION_TECHNICAL_REPORT.md)
+- **AI Coding 日志**：`logs/hxy299/`（107 个会话 / 28 个自然日 / 23,933 条事件，
+  已通过官方 `validate-log.py` 校验）
+- **自定义 Skill**：`skills/`（3 个：`embedded-soc-porting`、
+  `embedded-npu-porting`、`make-flashable-image`）
+- **提交核对清单**：[docs/SUBMISSION_CHECKLIST.md](docs/SUBMISSION_CHECKLIST.md)
+
 ## 三、主要成果
 
 | 子系统 | 状态 | 真机证据摘要 |
@@ -63,28 +86,43 @@ v97 用户中文多轮测试也已通过；桌宠开始按 Linux 原代码移植
 
 ```text
 contest2026_274_Dogking/
-├── board/a733-cubie-a7z/
-│   ├── openvela-overlay/
-│   │   ├── vendor/allwinnertech/chips/a733/        # A733 芯片与驱动
-│   │   ├── vendor/allwinnertech/boards/a733/       # Cubie A7Z 板级代码
-│   │   ├── apps/system/a733wifi/                    # Wi-Fi 管理命令
-│   │   ├── apps/system/a733services/                # 自启动服务管理
-│   │   ├── apps/system/a733ftpd/                    # FTP 服务封装
-│   │   ├── apps/system/a733npu/                     # NPU 用户命令
-│   │   ├── apps/system/aipet/                       # 官方 Agent 桌宠路由
-│   │   ├── apps/system/aipetllm/                    # 本地 Qwen2.5 推理
-│   │   ├── apps/system/aipetasr/                    # 本地 ASR 接口骨架
-│   │   ├── apps/system/a733display/                 # ST7735/LVGL 测试与 UI 入口
-│   │   └── apps、nuttx 的必要兼容文件                # 逐文件 manifest 映射
-│   └── README.md                                    # 板级说明
+├── board/
+│   ├── a733-cubie-a7z/
+│   │   ├── openvela-overlay/
+│   │   │   ├── vendor/allwinnertech/chips/a733/        # A733 芯片与驱动
+│   │   │   ├── vendor/allwinnertech/boards/a733/       # Cubie A7Z 板级代码
+│   │   │   ├── apps/system/a733wifi/                    # Wi-Fi 管理命令
+│   │   │   ├── apps/system/a733services/                # 自启动服务管理
+│   │   │   ├── apps/system/a733ftpd/                    # FTP 服务封装
+│   │   │   ├── apps/system/a733npu/                     # NPU 用户命令
+│   │   │   ├── apps/system/aipet/                       # 官方 Agent 桌宠路由
+│   │   │   ├── apps/system/aipetllm/                    # 本地 Qwen2.5 推理
+│   │   │   ├── apps/system/aipetasr/                    # 本地 ASR 接口骨架
+│   │   │   ├── apps/system/a733display/                 # ST7735/LVGL 测试与 UI 入口
+│   │   │   └── apps、nuttx 的必要兼容文件                # 逐文件 manifest 映射
+│   │   └── README.md                                    # 板级说明
+│   └── rockchip/                                        # RK3506 / RV1103 移植
+│       ├── chips/rk3506/          chips/rv1103/
+│       └── boards/rk3506/luckfox-lyra-zero-w/
+│           boards/rv1103/luckfox-pico-mini/
 ├── docs/
+│   ├── SUBMISSION_TECHNICAL_REPORT.md               # 参赛技术报告（按官方模板）
 │   ├── IMPLEMENTATION_STATUS.md                     # 功能矩阵和边界
 │   ├── TEST_EVIDENCE.md                             # 真机验收证据
 │   ├── ARTIFACTS.md                                 # 镜像/模型校验与获取规则
-│   └── UPSTREAM_PLAN.md                             # 公共仓拆分计划
+│   ├── BUILD_AND_IMAGE.md                            # 可复现构建与镜像
+│   ├── OPENVELA_COMPONENT_BOUNDARIES.md              # openvela/NuttX/板级边界
+│   ├── AI_PET_OPENVELA_FIRST_ARCHITECTURE.md         # 官方能力优先约束
+│   ├── ST7735_LVGL_PORT.md                           # 显示接线与 v121–v123 排障记录
+│   ├── SUBMISSION_CHECKLIST.md                       # 提交规则核对清单
+│   ├── PROJECT_HANDOFF_20260920.md                   # 交接文档
+│   ├── a733/                                         # A733 阶段文档
+│   │   └── version-archive/                          # v35–v65 历史版本记录
+│   └── rockchip/                                     # RK3506 / RV1103 移植说明
 ├── patches/                                         # 公共仓可审查兼容补丁
+├── skills/                                          # 自定义 Skill（3 个）
+├── logs/hxy299/                                     # AI Coding 日志（107 会话）
 ├── tools/build-a733.sh                              # 完整、可恢复的构建入口
-├── logs/                                            # 官方工具导出的真实 AI 日志
 ├── contest2026_274_Dogking.xml                      # 仓库 manifest 与 linkfile
 └── openvela.xml                                     # 大赛官方基线 manifest
 ```
@@ -107,17 +145,109 @@ ST7735 接线、官方驱动边界、构建产物和首轮板测步骤见
 ## 五、获取完整 openvela 工作区
 
 推荐 Ubuntu 22.04/24.04 或 Windows 11 + WSL2 Ubuntu。以下操作均在 Linux/WSL
-终端执行；不要把 Linux 构建工具直接换成 Windows 工具。
+终端执行；不要把 Linux 构建工具直接换成 Windows 工具。整个工作区要放在 WSL 的
+ext4 文件系统里（例如 `~/`），不要放在 `/mnt/c` 或 `/mnt/d` 下：跨文件系统访问
+会让同步和编译慢一个数量级。
+
+### 1. 先解决 repo 工具本身（国内网络必做）
+
+`repo` 启动器默认从 `gerrit.googlesource.com` 下载自身源码，该域名在国内不可达，
+直接执行 `repo init` 会以
+`Downloading Repo source from https://gerrit.googlesource.com/git-repo` 开头，并以
+`fatal: error [Errno 110] Connection timed out` 失败。先指定可达的镜像：
 
 ```bash
-mkdir -p ~/openvela-contest
-cd ~/openvela-contest
+export REPO_URL=https://gitee.com/oschina/repo.git
+export REPO_REV=stable
+```
 
-repo init \
-  -u https://github.com/hxy299/hxy299-a733-share-hub.git \
-  -b a733-cubie-a7z-share \
+如果 `~/.repoconfig` 下已有可用的 repo 源码（例如以前成功同步过 openvela），把
+`REPO_URL` 指向它即可完全离线：`export REPO_URL=<已有工作区>/.repo/repo`。
+
+### 2. 获取工作区
+
+openvela 基线托管在 gitee。本仓 `openvela.xml` 的 remote 使用**相对路径**
+（`../open-vela/`、`../`），repo 会以 manifest 的 URL 为基准解析它们。因此
+`repo init` 的 `-u` 必须落在 gitee 的 `open-vela` 命名空间下，否则 264 个项目会
+全部解析到 `https://github.com/open-vela/`（不存在）或本地 `/home/open-vela/`，
+逐个报 `Cannot fetch ...`。
+
+本仓的 `contest2026_274_Dogking.xml` 只在 GitHub 上提供，所以做法是先取得本仓
+manifest、以本地目录作为 manifest 源，再把相对 remote 改写为绝对地址：
+
+```bash
+mkdir -p ~/openvela-contest && cd ~/openvela-contest
+
+# 取本仓 manifest（GitHub 偶发连接失败，失败时重试）
+git clone -b a733-cubie-a7z-share \
+  https://github.com/hxy299/hxy299-a733-share-hub.git ~/manifest-cache
+
+# 相对 remote 改绝对地址，否则 repo 无法定位 openvela 基线
+sed -i \
+  -e 's#<remote fetch="\.\./open-vela/" name="openvela"/>#<remote fetch="https://gitee.com/open-vela/" name="openvela"/>#' \
+  -e 's#<remote fetch="\.\./" name="git"/>#<remote fetch="https://gitee.com/" name="git"/>#' \
+  ~/manifest-cache/openvela.xml
+
+repo init -u ~/manifest-cache -b a733-cubie-a7z-share \
   -m contest2026_274_Dogking.xml
 repo sync -c -j8
+```
+
+`repo` 的 linkfile 默认拒绝跨越软链接，而基线把 `apps/external` 做成指向
+`../external` 的软链接，本仓又需要在 `apps/external/` 下放兼容文件。这会让
+`repo sync` 整体中止，`packages/ai_agent` 等剩余项目不会被检出。给工作区内的
+`.repo/repo/project.py` 打一个最小补丁即可（只额外允许解析后仍落在工作区内的
+软链接）：
+
+```bash
+python3 - <<'PY'
+import os
+p = os.path.expanduser("~/openvela-contest/.repo/repo/project.py")
+s = open(p, encoding="utf-8").read()
+old = '''        if platform_utils.islink(path):
+            raise ManifestInvalidPathError(
+                f"{path}: traversing symlinks not allow"
+            )
+'''
+new = '''        if platform_utils.islink(path):
+            _resolved = os.path.realpath(path)
+            _base = os.path.realpath(base)
+            if _resolved != _base and not _resolved.startswith(_base + os.sep):
+                raise ManifestInvalidPathError(
+                    f"{path}: symlink escapes workspace ({_resolved})"
+                )
+'''
+assert old in s, "project.py already patched or version differs"
+open(p, "w", encoding="utf-8").write(s.replace(old, new, 1))
+print("patched")
+PY
+```
+
+`repo sync` 结束后确认基线版本与 manifest 一致：
+
+```bash
+for r in nuttx apps frameworks build tests packages/ai_agent vendor/allwinnertech; do
+  printf '%-26s %s\n' "$r" "$(git -C "$r" rev-parse --short HEAD)"
+done
+```
+
+### 3. 修正 `apps/external` 下的兼容文件
+
+`apps/external` 是指向 `../external` 的软链接，repo 为其中的兼容文件建立相对
+软链接后，凡先按字面折叠 `..` 再跟随软链接的工具（CMake、Python `realpath`）
+都会把路径解析少一级，文件不可读，CMake 报 `Cannot find source file`。这些文件
+必须落成真实文件：
+
+```bash
+cd ~/openvela-contest
+OV=contest2026_274_Dogking/board/a733-cubie-a7z/openvela-overlay
+for f in apps/external/curl/curl_config.h \
+         apps/external/libssh/libssh/src/init.c \
+         apps/external/libssh/libssh/examples/ssh_server.c \
+         apps/external/libssh/libssh/examples/ssh_client.c \
+         apps/external/libssh/libssh/examples/libssh_scp.c; do
+  rm -f "$f" && cp -f "$OV/$f" "$f"
+done
 ```
 
 同步后，公开协作仓库在 `contest2026_274_Dogking/`，其代码由 manifest 的
@@ -134,8 +264,23 @@ cd ~/openvela-contest
 bash contest2026_274_Dogking/tools/build-a733.sh
 ```
 
-该入口还会临时应用官方 Agent、readline 和 ARM64 兼容补丁，并在退出时恢复公共
-仓文件；不能用一条裸 `nuttx/tools/build.sh` 等价替代完整产品构建。
+该入口还会临时应用官方 Agent、readline、ST7735 和 ARM64 兼容补丁，并在退出时
+恢复公共仓文件；不能用一条裸 `nuttx/tools/build.sh` 等价替代完整产品构建。
+
+构建脚本内含三处本适配必不可少的处理，缺一不可：
+
+1. 用 `patches/ai-agent-a733-pet-and-http.patch` 一次性应用桌宠通道与 HTTP
+   收尾补丁。该补丁按 manifest 钉住的版本（`packages_ai_agent` `beabb12`）重新
+   生成；原先分两步的 `ai-agent-a733-pet-channel.patch` 与
+   `ai-agent-http-completion.patch` 上下文已过期（`http-completion` 的 hunk 6
+   引用了 `beabb12` 中不存在的 `pet_tls_read`/`pet_chunked_complete`），会在
+   hunk 失败处中止整个构建，因此已删除。
+2. 把 `apps/netutils/ftpd/{ftpd.c,ftpd.h,Kconfig}` 与
+   `apps/netutils/ntpclient/{ntpclient.c,Kconfig}` 从 overlay 复制进公共仓。
+   这些文件提供 `ftpd_set_auth_callback` 等本适配新增接口，manifest 无法为它们
+   建立 linkfile；缺失会在链接期报
+   `undefined reference to 'ftpd_set_auth_callback'`。
+3. 构建后校验 WAPI/SMP 与 ST7735/LVGL 配置并输出 `nuttx.bin` 的 SHA-256。
 
 增量构建：
 

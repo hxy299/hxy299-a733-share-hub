@@ -43,6 +43,7 @@ files=(
   vendor/allwinnertech/chips/a733/a733_uart4.c
   vendor/allwinnertech/chips/a733/a733_i2s0_audio.c
   vendor/allwinnertech/chips/a733/a733_header_peripherals.c
+  vendor/allwinnertech/chips/a733/a733_sdmmc.c
   vendor/allwinnertech/chips/a733/CMakeLists.txt
   vendor/allwinnertech/chips/a733/Kconfig
   vendor/allwinnertech/chips/a733/include/chip.h
@@ -57,6 +58,11 @@ files=(
   apps/system/a733wifi/Kconfig
   apps/system/a733services/a733services_main.c
   apps/system/a733services/services_config.c
+  apps/netutils/ftpd/Kconfig
+  apps/netutils/ftpd/ftpd.c
+  apps/netutils/ftpd/ftpd.h
+  apps/netutils/ntpclient/Kconfig
+  apps/netutils/ntpclient/ntpclient.c
   apps/system/a733display/CMakeLists.txt
   apps/system/a733display/Kconfig
   apps/system/a733display/a733display_main.c
@@ -150,10 +156,89 @@ for path in "${patched_files[@]}"; do
   cp "$official/$path" "$backup/$path"
 done
 
-patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
-  < "$team_dir/patches/nuttx-arm64-a733-aff1-cpuid.patch"
-patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
-  < "$team_dir/patches/nuttx-st7735-werror.patch"
+# Apply a patch idempotently.
+#
+# `patch --forward` exits 1 (not 0) when the tree already contains the change:
+# it reports "Reversed (or previously applied) patch detected!  Skipping patch."
+# Under `set -e` that aborted the whole script right after staging, so a repeat
+# build never reached the compiler.
+#
+# The undo step is wrapped in a --dry-run as well, and only performed when the
+# dry run reports zero fuzz and zero failures.  Reverse-applying these patches
+# blindly is not safe: several hunks carry inaccurate counts (for example
+# `@@ -114,1 +115,5 @@` in ai-agent-provisioning.patch actually adds six lines),
+# so a partial reverse silently duplicates lines (a second `read_done:` label
+# and an undeclared `value`) instead of removing them.
+apply_patch()
+{
+  local name="$1"
+  local rc=0
+  local probe
+
+  # `patch` is unusable for state detection by exit code: the reverse dry run
+  # returns 0 whether or not the change is present.  Only the message text
+  # distinguishes the two states:
+  #   already applied -> "checking file ..."                (clean, no warning)
+  #   not applied     -> "Unreversed patch detected!  Ignoring -R."
+  # A probe that reports FAILED/offset/fuzz cannot be trusted either way, so
+  # only a provably clean reverse is allowed to run.  Getting this wrong is
+  # destructive: reversing an applied patch and then failing to re-apply it
+  # silently built the kernel WITHOUT the panel init sequence (v122).
+  probe="$(patch -R --dry-run --batch --no-backup-if-mismatch -p1 \
+    -d "$official" < "$team_dir/patches/$name" 2>&1)" || true
+
+  if [[ "$probe" == *"Unreversed patch detected"* ]]; then
+    : # not applied - nothing to undo
+  elif [[ "$probe" == *"FAILED"* || "$probe" == *"offset"* ||
+          "$probe" == *"fuzz"* || "$probe" == *"hunk"* ]]; then
+    echo "Build trap: cannot determine state of $name; refusing to undo it." >&2
+    echo "$probe" >&2
+    exit 1
+  else
+    patch -R --batch --no-backup-if-mismatch -p1 -d "$official" \
+      < "$team_dir/patches/$name" >/dev/null 2>&1 || true
+  fi
+
+  patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
+    < "$team_dir/patches/$name" || rc=$?
+
+  if ((rc >= 2)); then
+    echo "Build trap: $name failed to apply (patch exit $rc)" >&2
+    exit 1
+  fi
+
+  # The --dry-run probes above leave .rej files behind, so clear them.
+  find "$official" -name '*.rej' -not -path '*/.repo/*' -delete 2>/dev/null || true
+}
+
+# Assert that a patch really did land.
+#
+# Every patch below used to be applied blind: `patch` exiting 1 for an ignored
+# hunk is not fatal, so the build happily continued with the change MISSING.
+# That is exactly how v122 shipped a kernel whose st7735 driver had no panel
+# init sequence at all, while the serial log looked perfectly healthy.
+require_contains()
+{
+  local file="$1"
+  local needle="$2"
+  local what="$3"
+
+  if ! grep -q -- "$needle" "$official/$file"; then
+    echo "Build trap: $file does not contain '$needle' after patching." >&2
+    echo "  ($what)" >&2
+    exit 1
+  fi
+}
+
+apply_patch nuttx-arm64-a733-aff1-cpuid.patch
+apply_patch nuttx-st7735-werror.patch
+apply_patch lvgl-nuttx-lcd-release-free.patch
+
+# Assert the two patches that are invisible at runtime when missing.
+require_contains nuttx/drivers/lcd/st7735.c st7735_initseq \
+  "panel init sequence (FRMCTR/PWCTR/VMCTR/gamma) must be sent at startup"
+require_contains nuttx/drivers/lcd/st7735.c st7735_cmd1 \
+  "single-parameter command helper used by the init sequence"
 
 if same_path "$aipet_overlay" "$aipet_official"; then
   aipet_saved=false
@@ -180,16 +265,10 @@ else
   mkdir -p "$official/apps/system"
   cp -a "$overlay/apps/system/aipet" "$official/apps/system/aipet"
 fi
-patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
-  < "$team_dir/patches/ai-agent-a733-pet-channel.patch"
-patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
-  < "$team_dir/patches/ai-agent-http-completion.patch"
-patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
-  < "$team_dir/patches/ai-agent-single-instance.patch"
-patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
-  < "$team_dir/patches/ai-agent-provisioning.patch"
-patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
-  < "$team_dir/patches/readline-utf8-backspace.patch"
+apply_patch ai-agent-a733-pet-and-http.patch
+apply_patch ai-agent-single-instance.patch
+apply_patch ai-agent-provisioning.patch
+apply_patch readline-utf8-backspace.patch
 
 cd "$official"
 export PATH="$official/prebuilts/build-tools/linux-x86_64/bin:$official/prebuilts/gcc/linux-x86_64/aarch64-none-elf/bin:$official/prebuilts/tools/linux-x86_64:$official/prebuilts/tools/cmake/bin:$official/prebuilts/tools/ninja:/usr/bin:/bin:${PATH:-}"

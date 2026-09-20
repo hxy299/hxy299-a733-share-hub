@@ -84,11 +84,32 @@ PTK → 安装 GTK → 开放 controlled port → DHCP；并在异步 disconnect
 
 - 复用 openvela/NuttX 官方 `drivers/lcd/st7735.c` 和 LVGL NuttX LCD backend；
   A733 板级代码只负责 SPI1、PL5 D/C、PB0 RESET 与 `/dev/lcd0` 注册。
-- `display status/test/run` 已编译进入 v120，RGB565、SPI Mode 0、12 MHz，目标
+- `display status/test/run` 已编译进入镜像，RGB565、SPI Mode 0、12 MHz，目标
   面板为 128×160 ST7735。
-- v120 已完成全量链接、ELF 符号、ext4/GPT 和内嵌内核回读校验，但尚未取得
-  屏幕点亮、颜色、方向、刷新稳定性和实际帧率的实机证据。
-- 详细接线、哈希和首轮测试见 `docs/ST7735_LVGL_PORT.md`。
+- **已实机确认**（2026-09-20）：
+  - `/dev/lcd0` 注册成功，`display status` 报 `lcd0=ready`；
+  - 电源域、引脚复用与 D/C 通路全部打通——`rpio-pl` 读到
+    `mux1` bit20..23 = 1（gpio_out）、`data` bit5 = 1（PL5 高），
+    D/C 电压由 2.13 V 变为 3.3 V；
+  - 主 PIO `cfg1=ff6666ff`，PD10..13 已复用为 SPI1 function 6；
+  - **面板初始化序列确证执行**：`st7735_lcdinitialize` 耗时由约 30 ms 变为
+    **537 ms**（含 380 ms 稳定延时 + FRMCTR/PWCTR/VMCTR/gamma/COLMOD）；
+    反汇编 `st7735_lcdinitialize` 可逐条核对到 12 条面板命令的立即数
+    （`0xffffffb1..b4`、`0xffffffc0..c5`、`0xe0`/`0xe1`）、参数
+    （`0x2c`/`0x2d` ×4、`0xa2`、`0x84`、`0x8a`、`0x2a`）与 `0x17c`(380 ms)。
+- **仍未通过**：画面为**竖条纹**、颜色不正确（应为白底 + 顶部红绿蓝三色带 +
+  深灰眼睛与嘴）。已新增 `display fill <RRGGBB>...` 纯色实测命令（绕过 LVGL
+  直写 `/dev/lcd0`），每种颜色连续显示两种 SPI 字节序，用于最终区分
+  "字节序问题"与"颜色格式问题"；并提供 `wordmsb`/`wordlsb` 运行时切换。
+- 期间定位并修复的四个层次问题（详见 `docs/ST7735_LVGL_PORT.md` v121–v123）：
+  1. 主 PIO pinctrl 误用旧版布局（应为 hw_type 4）；
+  2. R_PIO bank L 基址把 bank 序号乘进偏移，且 PL5 的 mux 在 `+0x04` 而非
+     `+0x00`，导致 PL5 一直是输入态；
+  3. 面板初始化补丁的 10 个 hunk 被 `patch` 全部忽略，而退出码非致命，
+     构建"成功"但内核里没有初始化序列——已改为按文本判定补丁状态并加入
+     `require_contains` 构建断言；
+  4. `st7735_bpp()` 仅在 bpp 变化时才发 COLMOD，颜色深度可能被继承——
+     已在初始化序列中无条件发送 `COLMOD=(BPP>>2)|1`。
 
 ## 音频与语音状态
 

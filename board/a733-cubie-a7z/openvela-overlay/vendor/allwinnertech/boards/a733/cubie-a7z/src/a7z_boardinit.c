@@ -159,7 +159,14 @@ int board_app_initialize(uintptr_t arg)
          ret < 0 ? "failed" : "ready", ret);
 #endif
 
-#ifdef CONFIG_BOARD_A7Z_ST7735
+#ifdef CONFIG_BOARD_A7Z_EARLY_ST7735
+  /* Opt-in only.  board_lcd_getdev() runs the whole panel command table and a
+   * 128x160 clear, which over the polling SPI1 lower-half is the slowest step
+   * in bring-up.  Doing that here means an unattached or miswired panel stalls
+   * the boot before NSH, with no console to explain it.  By default the panel is
+   * registered on first use by the display app via a7z_lcd_ensure_registered().
+   */
+
   ret = board_lcd_initialize();
   if (ret >= 0)
     {

@@ -121,6 +121,73 @@ xHCI HCRST 无法清零；随后 DWC3/app 寄存器读取为零。这里记录�
 后续 v113 实机仍未看到稳定端口连接；v114 加入 Combo PHY 表和最小 xHCI ring，
 已随 v115 完整构建，但尚未上板。USB 麦克风和摄像头没有 VID/PID/描述符证据。
 
+## ST7735 / LVGL 显示实机记录（2026-09-20）
+
+用户上板执行 `display test 30` 后回传的完整串口与照片证据。
+
+### 面板初始化序列确证执行
+
+```text
+[   34.543004] [CPU0] [13] display: [a7z_st7735] bring-up: SPI1 bus init
+[   34.718032] [CPU0] [13] display: [a7z_st7735] bring-up: RESET pulse done (PB0 high, SPI1 ready)
+[   34.718068] [CPU0] [13] display: [a7z_st7735] bring-up: st7735_lcdinitialize start
+[   35.255826] [CPU0] [13] display: [a7z_st7735] bring-up: st7735_lcdinitialize done (0x42470b10)
+[   35.255865] [CPU0] [13] display: [a7z_st7735] /dev/lcd0 registered on demand
+```
+
+`st7735_lcdinitialize` 耗时 **537 ms**（此前只做 sleep + fill 时约 30 ms），
+增量来自 380 ms 稳定延时与 FRMCTR/PWCTR/VMCTR/gamma/COLMOD 命令组。
+
+### 寄存器实测：D/C 通路已打通
+
+```text
+nsh> cat /dev/a733-lcd
+A733 ST7735 electrical checkpoint
+pio-pd: cfg0=ffffffff cfg1=ff6666ff drv0=00700000 pul0=11111111 data=00700000
+rpio-pl: cfg0=ff1ff122 drv0=11111110 pul0=00000025 data=00000024 pl5=1
+spi1: gcr=00000083 tcr=000000c4 ccr=00001000 fsr=00140000 bc=00000000 tc=00000000 isr=00001673
+ccu: spi1bgr=00010001 spi1clk=87000000 rpio=00000000
+```
+
+- `pio-pd cfg1=ff6666ff`：PD10..13 四位字段均为 `6`，即 SPI1 function，
+  主 PIO hw_type 4 布局修复生效。
+- `rpio-pl data=00000024` bit5 = 1 且 `pl5=1`：PL5 已真正驱动为高，
+  D/C 电压由修复前的 **2.13 V** 变为 **3.3 V**。
+
+### 尚未通过的部分
+
+画面仍为竖条纹，颜色不正确。预期场景（`a733display_main.c`
+`display_test_scene()`）为：白色背景 + 顶部 20 像素高的红/绿/蓝三色带 +
+两只深灰眼睛 + 深灰嘴。实际照片显示背景非白、整体呈青/蓝绿竖条纹、
+眼睛与嘴的位置正确但颜色偏暗绿。
+
+**结论**：图形管线可用（形状与位置正确），问题在 RGB565 数据通路上。
+已新增 `display fill <RRGGBB>...` 纯色实测命令与 `wordmsb`/`wordlsb`
+运行时字节序切换，用于最终判定。**本项不计入"已通过"。**
+
+### 镜像与内核（本次实测所用）
+
+```text
+内核 SHA-256    3214f6728cab6137382346498b5daa02a8022011c49e703b59a9bbb1aa5e1204
+内核大小        2195296 bytes
+镜像 SHA-256    aada743723a5a886cd1129227e763400dad3718a14016e6b0d3aba763a04ba97
+镜像大小        536887808 bytes (512 MiB)
+```
+
+三条独立校验通过（生成脚本、`reverify_image.py`、`verify-minimal.sh`），
+镜像内 `/extlinux/nuttx.bin` 与 `/boot/openvela/a733/nuttx.bin` 回读均与
+构建产物逐字节一致。
+
+### 显示子系统历史候选（保留）
+
+```text
+v120 内核  2183008 bytes  f3871b2422ba000e14df016197fe2a09217a58f03f873e62b4e5084c73700eb7
+v120 镜像  2147483648    6bececd77790eba146de0ef5762a2ec11b296a9665fb08f7f9fe24e67024941c
+```
+
+v120 只证明编译/链接/镜像正确，其"屏幕点亮"从未实机确认——保留以说明该结论
+已被后续实机结果取代。
+
 ## 八核 SMP 与本地 LLM
 
 板端 `cpucheck` 逐核确认 CPU0..5 为 Cortex-A55、CPU6..7 为 Cortex-A76，亲和

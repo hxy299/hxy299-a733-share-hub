@@ -7,15 +7,30 @@
 #include <nuttx/config.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
+#include <nuttx/lcd/lcd.h>
+#include <nuttx/lcd/lcd_dev.h>
 #include <lvgl/lvgl.h>
+
+/* Provided by the board ST7735 glue.  The panel is intentionally NOT brought
+ * up during board bring-up, so the first display command registers /dev/lcd0.
+ */
+
+extern int a7z_lcd_ensure_registered(void);
+
+/* Byte order of 16-bit SPI words, owned by the SPI lower half. */
+
+extern void a733_spi_set_word_lsb(bool lsb);
 
 static volatile sig_atomic_t g_stop;
 
@@ -70,6 +85,7 @@ static int display_run(unsigned int seconds)
   struct sigaction action;
   struct sigaction previous;
   unsigned int elapsed = 0;
+  int ret;
 
   if (lv_is_initialized())
     {
@@ -82,6 +98,20 @@ static int display_run(unsigned int seconds)
   sigemptyset(&action.sa_mask);
   sigaction(SIGINT, &action, &previous);
   g_stop = 0;
+
+  /* Bring the panel up on demand.  This runs the ST7735 command table and the
+   * initial full-screen clear, which is the slowest step of the whole chain, so
+   * report it rather than appearing to hang.
+   */
+
+  puts("display: initializing ST7735 (/dev/lcd0) ...");
+
+  ret = a7z_lcd_ensure_registered();
+  if (ret < 0)
+    {
+      fprintf(stderr, "display: panel bring-up failed (%d)\n", ret);
+      return ret;
+    }
 
   lv_init();
   lv_nuttx_dsc_init(&info);
@@ -118,8 +148,135 @@ static void display_usage(const char *progname)
           "Usage:\n"
           "  %s status\n"
           "  %s test [seconds]\n"
+          "  %s fill <RRGGBB> [RRGGBB ...]\n"
           "  %s run\n",
-          progname, progname, progname);
+          progname, progname, progname, progname);
+}
+
+/****************************************************************************
+ * Name: display_fill
+ *
+ * Description:
+ *   Write solid RGB565 colours straight to /dev/lcd0, with no LVGL and no
+ *   scene graph in the way.
+ *
+ *   This exists to tell a data-path fault from a rendering fault.  A solid
+ *   field of one colour removes the test pattern, the LVGL colour conversion
+ *   and the scene graph from the picture: if a solid red field still comes
+ *   out as vertical stripes then the RGB565 stream itself is being misread
+ *   (byte order or interface width), and no amount of panel setup will fix
+ *   it.
+ *
+ ****************************************************************************/
+
+static int display_fill(int argc, char *argv[])
+{
+  struct lcddev_area_s area;
+  uint16_t *fb;
+  uint32_t argb[8];
+  int ncolors = 0;
+  int fd;
+  int i;
+
+  if (argc < 3 || argc > 10)
+    {
+      return -EINVAL;
+    }
+
+  for (i = 2; i < argc; i++)
+    {
+      char *end;
+      unsigned long rgb = strtoul(argv[i], &end, 16);
+
+      if (*argv[i] == '\0' || *end != '\0' || rgb > 0xfffffful)
+        {
+          fprintf(stderr, "display: bad colour '%s'\n", argv[i]);
+          return -EINVAL;
+        }
+
+      argb[ncolors++] = (uint32_t)rgb;
+    }
+
+  if (a7z_lcd_ensure_registered() < 0)
+    {
+      fprintf(stderr, "display: panel bring-up failed\n");
+      return -ENODEV;
+    }
+
+  fd = open("/dev/lcd0", O_RDWR | O_CLOEXEC);
+  if (fd < 0)
+    {
+      fprintf(stderr, "display: cannot open /dev/lcd0: %d\n", errno);
+      return -errno;
+    }
+
+  /* CONFIG_LCD_RPORTRAIT swaps the axes: the framebuffer is 160 columns by
+   * 128 rows.  LCDDEVIO_PUTAREA takes the whole frame in one call.
+   */
+
+  fb = malloc(160u * 128u * sizeof(uint16_t));
+  if (fb == NULL)
+    {
+      close(fd);
+      return -ENOMEM;
+    }
+
+  memset(&area, 0, sizeof(area));
+  area.row_start = 0;
+  area.row_end   = 127;
+  area.col_start = 0;
+  area.col_end   = 159;
+  area.stride    = 160 * sizeof(uint16_t);
+  area.data      = (FAR uint8_t *)fb;
+
+  /* Show each requested colour for a couple of seconds, first with the
+   * datasheet byte order and then with the swapped one.  Red, green and blue
+   * together identify the channel order, and the two passes identify which
+   * byte order this panel wants - all from a single run.
+   */
+
+  for (i = 0; i < ncolors; i++)
+    {
+      uint8_t r = (argb[i] >> 16) & 0xff;
+      uint8_t g = (argb[i] >> 8) & 0xff;
+      uint8_t b = argb[i] & 0xff;
+      uint16_t pix = ((uint16_t)(r & 0xf8) << 8) |
+                     ((uint16_t)(g & 0xfc) << 3) |
+                     ((uint16_t)b >> 3);
+      int pass;
+
+      for (pass = 0; pass < 2; pass++)
+        {
+          size_t n;
+
+          a733_spi_set_word_lsb(pass == 1);
+
+          for (n = 0; n < 160u * 128u; n++)
+            {
+              fb[n] = pix;
+            }
+
+          printf("display: fill %02x%02x%02x rgb565=%04x order=%s\n",
+                 r, g, b, pix, pass == 1 ? "lsb" : "msb");
+
+          if (ioctl(fd, LCDDEVIO_PUTAREA,
+                    (unsigned long)(uintptr_t)&area) < 0)
+            {
+              fprintf(stderr, "display: PUTAREA failed: %d\n", errno);
+              break;
+            }
+
+          usleep(2000000);
+        }
+    }
+
+  /* Leave the driver in the datasheet order. */
+
+  a733_spi_set_word_lsb(false);
+
+  free(fb);
+  close(fd);
+  return OK;
 }
 
 int main(int argc, char *argv[])
@@ -130,6 +287,19 @@ int main(int argc, char *argv[])
 
   if (argc == 2 && strcmp(argv[1], "status") == 0)
     {
+      /* Register on demand so status reflects whether the panel can actually be
+       * brought up, not merely whether someone else already did it.
+       */
+
+      ret = a7z_lcd_ensure_registered();
+      if (ret < 0)
+        {
+          printf("display: lcd0=missing controller=ST7735 resolution=128x160 "
+                 "format=RGB565 spi=1 mode=0 frequency=12000000 "
+                 "bring-up-failed=%d\n", ret);
+          return EXIT_FAILURE;
+        }
+
       ret = stat("/dev/lcd0", &info);
       printf("display: lcd0=%s controller=ST7735 resolution=128x160 "
              "format=RGB565 spi=1 mode=0 frequency=12000000\n",
@@ -153,6 +323,17 @@ int main(int argc, char *argv[])
         }
 
       return display_run(seconds) < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
+    }
+
+  if (argc >= 2 && strcmp(argv[1], "fill") == 0)
+    {
+      ret = display_fill(argc, argv);
+      if (ret == -EINVAL)
+        {
+          display_usage(argv[0]);
+        }
+
+      return ret < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
   if (argc == 2 && strcmp(argv[1], "run") == 0)

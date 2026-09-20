@@ -23,8 +23,11 @@
 #include <errno.h>
 #include <stdint.h>
 
+#include <syslog.h>
+
 #include <nuttx/arch.h>
 #include <nuttx/lcd/lcd.h>
+#include <nuttx/lcd/lcd_dev.h>
 #include <nuttx/spi/spi.h>
 #include <nuttx/lcd/st7735.h>
 
@@ -38,6 +41,8 @@
 #define A733_PB_CFG0           (A733_PB_BASE + 0x00)
 #define A733_PB_DATA           (A733_PB_BASE + 0x10)
 #define A733_ST7735_RESET_PIN  0
+
+#define TAG "a7z_st7735"
 
 static struct spi_dev_s *g_st7735_spi;
 static struct lcd_dev_s *g_st7735_lcd;
@@ -62,9 +67,12 @@ int board_lcd_initialize(void)
 {
   uint32_t value;
 
+  syslog(LOG_INFO, "[%s] bring-up: SPI1 bus init\n", TAG);
+
   g_st7735_spi = a733_spibus_initialize(1);
   if (g_st7735_spi == NULL)
     {
+      syslog(LOG_ERR, "[%s] SPI1 bus init failed\n", TAG);
       return -ENODEV;
     }
 
@@ -85,6 +93,9 @@ int board_lcd_initialize(void)
   up_mdelay(20);
   a7z_st7735_reset_write(true);
   up_mdelay(150);
+
+  syslog(LOG_INFO, "[%s] bring-up: RESET pulse done (PB0 high, SPI1 ready)\n",
+         TAG);
   return OK;
 }
 
@@ -97,10 +108,57 @@ struct lcd_dev_s *board_lcd_getdev(int devno)
 
   if (g_st7735_lcd == NULL)
     {
+      /* st7735_lcdinitialize() runs the panel command table and a full-screen
+       * clear.  Over the polling SPI1 lower-half that clear is the single
+       * longest step in the whole bring-up, so log both sides of it.
+       */
+
+      syslog(LOG_INFO, "[%s] bring-up: st7735_lcdinitialize start\n", TAG);
       g_st7735_lcd = st7735_lcdinitialize(g_st7735_spi);
+      syslog(LOG_INFO, "[%s] bring-up: st7735_lcdinitialize done (%p)\n", TAG,
+             (void *)g_st7735_lcd);
     }
 
   return g_st7735_lcd;
+}
+
+/****************************************************************************
+ * Name: a7z_lcd_ensure_registered
+ *
+ * Description:
+ *   Register /dev/lcd0 on first use.  board_lcd_getdev() performs the panel
+ *   bring-up, so this is deliberately NOT called from board bring-up unless
+ *   CONFIG_BOARD_A7Z_EARLY_ST7735 is selected.
+ *
+ * Returned Value:
+ *   OK on success, or a negated errno on failure.
+ *
+ ****************************************************************************/
+
+int a7z_lcd_ensure_registered(void)
+{
+  int ret;
+
+  if (g_st7735_lcd != NULL)
+    {
+      return OK;
+    }
+
+  ret = board_lcd_initialize();
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  ret = lcddev_register(0);
+  if (ret < 0)
+    {
+      syslog(LOG_ERR, "[%s] lcddev_register failed (%d)\n", TAG, ret);
+      return ret;
+    }
+
+  syslog(LOG_INFO, "[%s] /dev/lcd0 registered on demand\n", TAG);
+  return OK;
 }
 
 void board_lcd_uninitialize(void)

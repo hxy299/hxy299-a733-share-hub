@@ -22,6 +22,19 @@
     <linkfile src="board/a733-cubie-a7z/openvela-overlay/vendor/allwinnertech/boards/a733/cubie-a7z"
               dest="vendor/allwinnertech/boards/a733/cubie-a7z"/>
 
+    <!-- Rockchip ports maintained in this same team repo.  Same layout rule as
+         A733: the chip lower-half lives under vendor/rockchip/chips and each
+         board directory under vendor/rockchip/boards.  These are genuinely
+         new SoC ports (RK3506 and RV1103), not configuration presets. -->
+    <linkfile src="board/rockchip/chips/rk3506"
+              dest="vendor/rockchip/chips/rk3506"/>
+    <linkfile src="board/rockchip/chips/rv1103"
+              dest="vendor/rockchip/chips/rv1103"/>
+    <linkfile src="board/rockchip/boards/rk3506/luckfox-lyra-zero-w"
+              dest="vendor/rockchip/boards/rk3506/luckfox-lyra-zero-w"/>
+    <linkfile src="board/rockchip/boards/rv1103/luckfox-pico-mini"
+              dest="vendor/rockchip/boards/rv1103/luckfox-pico-mini"/>
+
     <!-- Board-specific user-facing tools. -->
     <linkfile src="board/a733-cubie-a7z/openvela-overlay/apps/system/a733wifi"
               dest="apps/system/a733wifi"/>
