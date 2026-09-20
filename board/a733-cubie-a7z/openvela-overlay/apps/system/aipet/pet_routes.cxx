@@ -116,7 +116,7 @@ public:
     return force || connected;
   }
   bool local_reply(const std::string &user,std::string &out) override {
-    if (inspect) { out="路由检查：local_llm（接口保留，当前暂停）"; return true; }
+    if (inspect) { out="路由检查：local_llm（Qwen2.5，CPU2-7）"; return true; }
     if (error) printf("aipet: cloud unavailable error=%d; entering fallback\n",error);
     pthread_mutex_lock(&backend_lock); auto backend=local_backend;
     pthread_mutex_unlock(&backend_lock);
@@ -173,9 +173,33 @@ int routed_ask(const char *text,bool inspect,bool force_cloud)
     turn.cloud_fallback,ms);
   if (!turn.ok) {
     printf("aipet: route failed %d\n",ports.error);
-    if (ports.error==-ENOSYS) puts("Local LLM is paused; reconnect/use cloud. No local inference was performed.");
+    if (ports.error==-ENOSYS) puts("Local LLM backend is not registered.");
+    else if (ports.error==-ENOENT) puts("Local model is missing; copy the configured GGUF into /data/models.");
+    else if (ports.error==-ENODEV) puts("Local LLM is disabled; use 'aipet local on'.");
   }
   return turn.ok?0:1;
+}
+
+int routed_local_ask(const char *text)
+{
+  Reply validate;
+  if (!text || !parse_reply(text, validate)) {
+    puts("aipet: invalid UTF-8 or oversized input"); return 1;
+  }
+  BoardPorts ports;
+  std::string raw;
+  struct timespec before, after;
+  clock_gettime(CLOCK_MONOTONIC, &before);
+  if (!ports.local_reply(text, raw)) {
+    printf("aipet: local LLM failed %d\n", ports.error); return 1;
+  }
+  Reply reply;
+  if (!parse_reply(raw, reply) || !ports.present(reply)) return 1;
+  clock_gettime(CLOCK_MONOTONIC, &after);
+  long long ms=(after.tv_sec-before.tv_sec)*1000LL+
+               (after.tv_nsec-before.tv_nsec)/1000000;
+  printf("[route=local_llm fallback=0 elapsed=%lld ms]\n", ms);
+  return 0;
 }
 
 int uart_tts_control(const char *command,const char *text)

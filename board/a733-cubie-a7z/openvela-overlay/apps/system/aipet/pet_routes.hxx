@@ -11,5 +11,6 @@ Rules default_routes();
 bool load_routes(const char *path, Rules &out);
 std::string expand_clock_template(const std::string &text);
 int routed_ask(const char *text, bool inspect, bool force_cloud);
+int routed_local_ask(const char *text);
 int uart_tts_control(const char *command, const char *text = nullptr);
 }

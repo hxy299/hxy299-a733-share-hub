@@ -41,7 +41,7 @@ YOLOv8n 六输出和动态输入均已通过真机验证，而不是固定输出
 | 网络服务 | 完成 | SSH、SCP、FTP、curl、wget、NTP、iperf、可选自启动 |
 | NPU | 完成基线 | VIP2 ABI、MMU/DMA/IRQ，LeNet/YOLOv5/YOLOv8 真机运行 |
 | 官方 AI Agent | 联网对话实机通过 | `packages_ai_agent`、DeepSeek/MiMo、API Key 板级加密、自动启动和连续中文对话 |
-| AI 桌宠路由 | 文字主链路完成 | 快速规则、官方 Agent、回复/表情/动作解析；本地 LLM 注册和硬件表现层待接入 |
+| AI 桌宠路由 | 混合文字链路完成 | 快速规则、官方 Agent、本地 Qwen 回退、回复/表情/动作解析和 UART4 播报 |
 | UART4 TTS | v118 实机通过 | `/dev/ttyS4`、TW-TTS UTF-8、sun60iw2 CCU/pinctrl、FIFO 发送和重复播报均通过 |
 | I2S 音频 | 诊断阶段 | MAX98357A/INMP441 引脚与时钟诊断已加入，尚无 PCM lower-half |
 | UVC 摄像头 | 进行中 | Type-C/PHY/xHCI 检查点完成，设备枚举尚未完成 |
@@ -55,6 +55,8 @@ YOLOv8n 六输出和动态输入均已通过真机验证，而不是固定输出
 合并开发 v96 加入流式输出、有限多轮历史和协作停止，原候选说明及板端验收步骤见 [v96 合并开发](docs/a733/LLM_V96_STREAM_HISTORY_STOP.md)。
 后续用户日志已验证 v96 中文流式回答与两轮记忆；运行中停止及 Ctrl+C 清理仍待验收/修复。正规 `llm` 应用入口及已知边界见 [v97 应用封装](docs/a733/LLM_V97_APP_FRONTEND.md)。
 v97 用户中文多轮测试也已通过；桌宠开始按 Linux 原代码移植，首轮业务核心与 69 个解析行为对照已完成，完整进度和后续接口见 [桌宠移植阶段 1](docs/a733/AIPET_LINUX_PORT_STAGE1.md)。
+本地 Qwen 与桌宠路由的正式库级接入、配置命令和板测流程见
+[本地 LLM Agent 接入](docs/a733/AIPET_LOCAL_LLM_AGENT.md)。
 
 ## 四、仓库结构
 
@@ -280,8 +282,9 @@ AI 辅助的典型闭环：
    通用 NBG 编译/链接仍依赖官方授权工具。
 5. 公共 `apps`/`nuttx` 兼容修改需要按官方流程拆分并提交对应仓库的
    `dev-ai-contest-2026` PR。
-6. 本地 Qwen 尚未注册到桌宠 `LocalRouteBackend`；UART4 TTS、MAX98357A、
-   INMP441、屏幕表情和动作执行仍需实机与产品层验收。
+6. 本地 Qwen 已注册到桌宠 `LocalRouteBackend`，但首次从 SD 载入约 1.1 GiB
+   模型耗时较长，且当前为 CPU 贪心解码；MAX98357A、INMP441、屏幕表情和
+   动作执行仍需实机与产品层验收。
 
 ## 十二、官方大赛资料
 

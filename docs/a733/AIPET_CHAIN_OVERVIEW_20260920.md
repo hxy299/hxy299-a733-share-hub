@@ -75,10 +75,14 @@ idle -> routing -> generating -> presenting -> idle
 
 独立的 CPU 推理底座已经完成 tokenizer、Q4_K/Q6_K 张量读取、28 层前向、KV cache、模型常驻和多核工作池等阶段，并在 A733 八核 SMP 上运行过。它当前使用 CPU，不使用 NPU。
 
-桌宠路由器已经保留线程安全注册口 `aipet::set_local_route_backend()`，但板端尚未把本地 LLM 实现注册进去。因此：
+桌宠路由器通过线程安全注册口 `aipet::set_local_route_backend()` 接入
+`aipetllm_infer()`。该入口直接调用本地推理库，不启动 shell、不捕获 stdout，
+并与独立 `aipetllm` 命令共享常驻模型和六核工作池。因此：
 
-- 独立 `llm/aipetllm` 命令可运行，不等于桌宠已经启用本地回退。
-- 无网或云端失败时，如果接口未注册，会明确返回 `ENOSYS`。
+- `aipet local ask "文本"` 可强制验证桌宠本地链路。
+- 无网或云端失败时，`aipet ask` 自动进入本地回退。
+- 默认模型为 `/data/models/qwen2.5-1.5b-instruct-q4_k_m.gguf`，默认 32 个
+  输出 token，CPU 掩码为 `fc`（CPU2..7）。
 - 不会用固定文案冒充本地模型生成。
 
 #### NPU 与视觉模型
@@ -107,7 +111,7 @@ led.on / led.off / led.rainbow
 
 ### 5. 语音输出
 
-UART4 TW-TTS 已进入 v115 候选镜像：
+UART4 TW-TTS 已在 v118 完成实机验收：
 
 - 设备：`/dev/ttyS4`
 - 参数：9600、8N1
@@ -117,7 +121,8 @@ UART4 TW-TTS 已进入 v115 候选镜像：
 - 单独测试：`aipet tts test "串口语音测试成功"`
 - 持久标记：`/data/ai_agent/config/uart_tts.enabled`
 
-启用后，正常 Agent 回复会同时打印并发送到 UART4。TTS 失败只输出诊断，不会破坏文字回复。当前代码、主机协议测试和完整镜像构建已经通过，但由于暂时没有开发板，实际发声仍待验证。
+启用后，云端和本地回复都会同时打印并发送到 UART4。TTS 失败只输出诊断，
+不会破坏文字回复。实机已经验证初始化参数帧、UTF-8 文本帧和重复播报。
 
 MAX98357A/INMP441 目前只完成 I2S0 资源梳理和 `/dev/a733-audio` 非破坏诊断。尚未注册 openvela 音频 lower-half，也没有 BCLK/LRCK、播放或采集数据流。未来应接入官方 Media Player/Recorder，而不是在桌宠逻辑里直接操作 I2S FIFO。
 

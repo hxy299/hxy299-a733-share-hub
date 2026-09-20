@@ -27,6 +27,11 @@ struct aipetllm_metrics
   double after_first_seconds;
 };
 int aipetllm_infer(const struct aipetllm_request *, struct aipetllm_metrics *);
+/* Process-wide controls shared by the NSH frontend and embedded clients.
+ * The return value is zero on success.  Unload/stop fail safely while the
+ * model is busy; status writes a bounded snapshot without exposing weights. */
+int aipetllm_generation_control(int stop);
+int aipetllm_cache_control(int unload);
 #ifdef __cplusplus
 }
 #endif
