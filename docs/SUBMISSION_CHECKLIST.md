@@ -40,6 +40,32 @@ git remote add origin https://github.com/open-vela/contest2026_274_Dogking.git
 git push origin a733-cubie-a7z-share
 ```
 
+### 备用通道：可移植 git bundle（已生成并验证）
+
+如果这台机器仍连不上 GitHub，桌面上已经放好一个**自包含**的 bundle，
+可以拷到任意能上网的机器上直接推送：
+
+```text
+C:\Users\hxy299\Desktop\contest2026_274_Dogking.bundle
+大小      19,119,229 字节
+SHA-256   461ec75a1bc7ddc6c2e5f8a161159b1f4fa6eb4f26c9b30aae8c320a7667edd1
+```
+
+已验证：`git bundle verify` 报 **complete history**；克隆还原后 HEAD、文件列表
+（557 个）与源仓库**完全一致**，107 个日志会话与 92 个 Rockchip 文件均在。
+
+在另一台机器上：
+
+```bash
+git clone -b a733-cubie-a7z-share contest2026_274_Dogking.bundle repo
+cd repo
+git remote set-url origin https://github.com/hxy299/hxy299-a733-share-hub.git
+git push origin a733-cubie-a7z-share
+```
+
+> bundle 里含完整的 Git 历史（不只是工作树），所以推送后 GitHub 上的提交历史
+> 与本地一致，评审可以直接 `clone` 编译。
+
 推送后请核对 GitHub 上确实出现：
 
 ```text
