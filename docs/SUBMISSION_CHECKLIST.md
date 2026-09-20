@@ -91,13 +91,30 @@ git ls-files | grep -E '\.(key|pem|p12|crt)$'            无命中
 
 ## 正式提交前必须恢复
 
-1. 将 manifest 项目恢复为组委会仓库 `open-vela/contest2026_274_Dogking`，分支
-   `dev-ai-contest-2026`，并同步修改 README 的 `repo init` 示例。
-2. 从个人分支创建面向组委会专属仓库的 PR；遵守保护分支，不强推覆盖历史。
-3. 使用报名账号签署 CLA；若 `cla/signature` 未刷新，在 PR 评论 `/check-cla`。
-4. 公共 `nuttx/apps/packages/vendor` 修改按功能拆分到对应公共仓 fork，并向
+1. [x] **manifest 已恢复为组委会仓库**：`contest2026_274_Dogking.xml` 现在指向
+   `open-vela/contest2026_274_Dogking`、分支 `dev-ai-contest-2026`、remote `dogking`。
+   协作期指向个人仓库的配置只保留在注释里说明。
+2. [ ] 从个人分支创建面向组委会专属仓库的 PR；遵守保护分支，不强推覆盖历史。
+3. [ ] 使用报名账号签署 CLA；若 `cla/signature` 未刷新，在 PR 评论 `/check-cla`。
+4. [ ] 公共 `nuttx/apps/packages/vendor` 修改按功能拆分到对应公共仓 fork，并向
    `dev-ai-contest-2026` 提交 PR；比赛仓保留 overlay/patch 是当前可复现开发形态，
    不能替代获奖后的上游合入。
+
+> **注意**：改完 manifest 后，本机若还要继续用个人仓库协作，需要把
+> `name/revision/remote` 临时改回 `hxy299/hxy299-a733-share-hub` /
+> `a733-cubie-a7z-share` / `dogking-share`。不要带着协作配置提交。
+
+## README 的 `repo init` 示例
+
+README 第五节目前给的仍是个人协作仓库的 `repo init` 命令。**正式提交前需要同步
+改成组委会仓库**：
+
+```bash
+repo init -u https://github.com/open-vela/contest2026_274_Dogking.git \
+  -b dev-ai-contest-2026 -m contest2026_274_Dogking.xml
+```
+
+（该项在下面「仓库内容检查」中标记为待办，避免误以为已完成。）
 
 ## 仓库内容检查
 

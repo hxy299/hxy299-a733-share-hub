@@ -175,6 +175,16 @@ openvela 基线托管在 gitee。本仓 `openvela.xml` 的 remote 使用**相对
 本仓的 `contest2026_274_Dogking.xml` 只在 GitHub 上提供，所以做法是先取得本仓
 manifest、以本地目录作为 manifest 源，再把相对 remote 改写为绝对地址：
 
+> **正式提交版（评委请用这条）**：manifest 已指向组委会仓库与比赛分支。
+>
+> ```bash
+> repo init -u https://github.com/open-vela/contest2026_274_Dogking.git \
+>   -b dev-ai-contest-2026 -m contest2026_274_Dogking.xml
+> repo sync -c -j8
+> ```
+>
+> 下面这段是**联合开发期**使用个人协作仓库的取法，正式提交不需要。
+
 ```bash
 mkdir -p ~/openvela-contest && cd ~/openvela-contest
 

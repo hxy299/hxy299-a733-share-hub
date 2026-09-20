@@ -8,14 +8,18 @@
   -->
   <include name="openvela.xml"/>
 
-  <!-- Public collaboration repository.  Keep the checkout path stable so
-       existing build commands and linkfile destinations remain unchanged. -->
-  <remote name="dogking-share" fetch="https://github.com/"/>
+  <!-- Official competition repository.
+       Reviewers clone this manifest, so it must point at the organiser repo on
+       the contest branch.  During joint development this pointed at the
+       personal collaboration repo (hxy299/hxy299-a733-share-hub, branch
+       a733-cubie-a7z-share); switch it back to that pair only for local
+       collaboration, never for a submission. -->
+  <remote name="dogking" fetch="https://github.com/"/>
 
   <project path="contest2026_274_Dogking"
-           name="hxy299/hxy299-a733-share-hub"
-           remote="dogking-share"
-           revision="a733-cubie-a7z-share">
+           name="open-vela/contest2026_274_Dogking"
+           remote="dogking"
+           revision="dev-ai-contest-2026">
     <!-- A733/Cubie A7Z board and chip implementation. -->
     <linkfile src="board/a733-cubie-a7z/openvela-overlay/vendor/allwinnertech/chips/a733"
               dest="vendor/allwinnertech/chips/a733"/>
