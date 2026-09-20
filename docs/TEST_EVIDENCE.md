@@ -185,6 +185,27 @@ AArch64 全目标编译/链接、`e2fsck -fn`、`sgdisk -v` 和镜像内核回�
 通过。仍须实机取得 `thre=1` 或 `tfnf=1`、`stage=complete`、帧计数递增和
 实际发声，才可标记 UART TTS 硬件通过。
 
+## UART4 TTS v117 实机结果与 v118 MMIO 修复
+
+v117 的 `/dev/a733-uart4` 同时读到 `apb-uart=0`、`bgr=0`、PJ24/PJ25
+function 0、`lcr/lsr/usr=0`，TTS 仍为 `stage=parameters/-110`。三个独立硬件
+域同时为零证明问题不是模块接线或协议，而是 MMIO 地址计算错误。
+
+官方 `sun60iw2p1.dtsi` 指定主 CCU 为 `0x02002000`；官方 sun60iw2 pinctrl
+HW type 4 使用首 bank `+0x80`、bank 步长 `0x80`、drive `+0x20`、pull
+`+0x30`。v118 已逐项同步这些定义，UART4 基址仍为正确的 `0x02504000`。
+
+```text
+image:  openvela-a733-cubie-a7z-sd-uart-mmio-v118-candidate.img
+bytes:  2147483648
+sha256: 8330d6eeccc2f7736ccab2a567fdd109c87188656d4dd8809236877188dde685
+kernel bytes:  1920592
+kernel sha256: aa0ed5b717f136b3fadde2dbdb2abd26928acaec11a83261e944b558dd731356
+```
+
+AArch64 完整链接、ext4、GPT 和镜像内核回读哈希均通过；硬件状态仍以 v118
+实机日志为最终依据。
+
 ## v67 WEXT/WAPI 构建与镜像校验
 
 2026-09-14 完成全量构建和两次增量构建，以下目标均编译并链接成功：

@@ -1,5 +1,18 @@
 # A733 AI 桌宠音频阶段：UART4 TTS 与 I2S0
 
+## v118 UART4 MMIO 映射修复候选
+
+- 镜像：`openvela-a733-cubie-a7z-sd-uart-mmio-v118-candidate.img`
+- 镜像 SHA-256：`8330d6eeccc2f7736ccab2a567fdd109c87188656d4dd8809236877188dde685`
+- 内嵌内核 SHA-256：`aa0ed5b717f136b3fadde2dbdb2abd26928acaec11a83261e944b558dd731356`
+- v117 实机证据：CCU、PIO 和 UART 诊断值全部为零，发送仍在参数首字节
+  `-110`；软件节点注册成功不代表硬件地址正确。
+- v118 修复：主 CCU 从错误的 `0x02001000` 改为官方 DTS 的
+  `0x02002000`；PIO 改用 sun60iw2 pinctrl HW type 4 的 `0x80` 首 bank、
+  `0x80` 步长、`0x20/0x30` drive/pull 布局。
+- 构建状态：完整 AArch64 编译/链接、ext4、GPT、内核回读校验通过。
+- 实机状态：待复测，不提前标记发声成功。
+
 ## v117 UART4 硬件初始化修复候选
 
 - 镜像：`openvela-a733-cubie-a7z-sd-uart-hw-v117-candidate.img`
@@ -125,5 +138,6 @@ cat /dev/a733-audio
 - MAX98357A 尚未输出音频；当前没有切换 I2S 引脚复用。
 - INMP441 尚未采样；当前没有注册 PCM capture 设备。
 - UART4/TTS 的 v115 `-22` 已在 v116 修复；v116 的 FIFO `-110` 已在 v117
-  加入时钟/复位修复与寄存器诊断。协议测试、路由回归和 AArch64 完整链接
-  通过，但仍以 v117 实机发声作为最终验收。
+  加入时钟/复位修复与寄存器诊断；v117 进一步暴露 MMIO 映射错误，已由
+  v118 修复。协议测试、路由回归和 AArch64 完整链接通过，但仍以 v118
+  实机发声作为最终验收。

@@ -86,7 +86,10 @@ PTK → 安装 GTK → 开放 controlled port → DHCP；并在异步 disconnect
   修复。v116 实机已进入参数帧发送阶段，但 UART FIFO 状态始终为零并在首字节
   超时（`stage=parameters/-110`）。v117 按官方 sun60iw2 CCU 定义显式选择
   24 MHz APB-UART 父时钟，并以“拉复位、开门控、释放复位”顺序初始化，新增
-  `/dev/a733-uart4` 寄存器诊断；完整构建和镜像校验通过，等待实机发声验证。
+  `/dev/a733-uart4` 寄存器诊断。v117 实机诊断发现 CCU、PIO、UART 全部为零，
+  由此确认旧实现仍使用了错误的 CCU 基址和传统 pinctrl 布局。v118 已改为
+  官方 DTS 的 CCU `0x02002000`，并采用 sun60iw2 HW type 4 的 `0x80` 首 bank、
+  `0x80` bank 步长、`0x20/0x30` 驱动/上下拉偏移；等待实机发声验证。
 - I2S0 的 MAX98357A/INMP441 引脚与时钟资源已确认，`/dev/a733-audio` 只做
   非破坏诊断；尚未注册 openvela PCM lower-half，也没有播放/采集数据流。
 - 官方云端 ASR 接口和本地 ASR 骨架已经调研/保留，但没有真实麦克风 PCM 输入，

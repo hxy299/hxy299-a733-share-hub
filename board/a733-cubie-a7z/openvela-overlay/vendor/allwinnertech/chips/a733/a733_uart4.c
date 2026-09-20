@@ -32,9 +32,10 @@
 
 #include "arm64_internal.h"
 
-#define A733_CCU_BASE          UINT64_C(0x02001000)
+#define A733_CCU_BASE          UINT64_C(0x02002000)
 #define A733_PIO_BASE          UINT64_C(0x02000000)
-#define A733_PIO_STRIDE        UINT64_C(0x30)
+#define A733_PIO_FIRST_BANK    UINT64_C(0x80)
+#define A733_PIO_STRIDE        UINT64_C(0x80)
 #define A733_UART4_BGR         (A733_CCU_BASE + UINT64_C(0x0e10))
 #define A733_APB_UART_CLK      (A733_CCU_BASE + UINT64_C(0x0538))
 #define A733_UART4_BASE        UINT64_C(0x02504000)
@@ -61,7 +62,8 @@
 #define A733_UART4_GATE        (1u << 0)
 #define A733_UART4_RESET       (1u << 16)
 
-#define A733_PJ_CFG3           (A733_PIO_BASE + 9u * A733_PIO_STRIDE + 0x0c)
+#define A733_PJ_CFG3           (A733_PIO_BASE + A733_PIO_FIRST_BANK + \
+                                9u * A733_PIO_STRIDE + 0x0c)
 
 static mutex_t g_uart4_lock = NXMUTEX_INITIALIZER;
 
@@ -134,10 +136,16 @@ static const struct file_operations g_uart4_diag_fops =
 static void a733_pinmux(unsigned int bank, unsigned int pin,
                         unsigned int function)
 {
-  uintptr_t base = A733_PIO_BASE + bank * A733_PIO_STRIDE;
+  /* sun60iw2 uses pinctrl HW type 4, not the legacy Allwinner layout:
+   * bank A starts at +0x80, each bank occupies 0x80 bytes, drive registers
+   * start at +0x20 and pull registers at +0x30.
+   */
+
+  uintptr_t base = A733_PIO_BASE + A733_PIO_FIRST_BANK +
+                   bank * A733_PIO_STRIDE;
   uintptr_t cfg = base + (pin / 8) * 4;
-  uintptr_t drv = base + 0x14 + (pin / 8) * 4;
-  uintptr_t pul = base + 0x24 + (pin / 16) * 4;
+  uintptr_t drv = base + 0x20 + (pin / 8) * 4;
+  uintptr_t pul = base + 0x30 + (pin / 16) * 4;
   unsigned int cfgshift = (pin % 8) * 4;
   unsigned int drvshift = (pin % 8) * 4;
   unsigned int pulshift = (pin % 16) * 2;
