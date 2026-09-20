@@ -6,20 +6,22 @@
 ## 最新可恢复候选镜像
 
 ```text
-名称：openvela-a733-cubie-a7z-sd-audio-uart-v115-candidate.img
-SHA-256：cf25ac887087e5bbad1863258225d2060c3c875706b84686d1ef8cdc6b01c834
+名称：openvela-a733-cubie-a7z-sd-st7735-lvgl-v120-candidate.img
+大小：2147483648 bytes
+SHA-256：6bececd77790eba146de0ef5762a2ec11b296a9665fb08f7f9fe24e67024941c
 ```
 
 镜像内嵌内核：
 
 ```text
-SHA-256：2d3af39ada75f72e42f127867637c2643142ec2d949c0117b1c62d8d5df80d08
+大小：2183008 bytes
+SHA-256：f3871b2422ba000e14df016197fe2a09217a58f03f873e62b4e5084c73700eb7
 ```
 
-对应源码提交为 `002a310`，恢复 bundle SHA-256 为
-`c09167d64ff263d78684012f6c1eca892f2293b019af09a4e1b299940bb266d4`。
-完整交叉构建、ext4、GPT 和内嵌内核一致性校验已经通过。由于当前没有开发板，
-UART4 TW-TTS 实际发声和 I2S0 诊断仍待验证，因此 v115 不是正式发布版。
+对应源码提交为 `4df0e90`。完整交叉构建、ELF 符号、ext4、GPT 和内嵌内核
+一致性校验已经通过。UART4 TW-TTS 已在 v118 实机通过；v120 新增的 ST7735、
+`/dev/lcd0`、LVGL NuttX backend 和 `display` 应用仍待实机点亮，因此 v120
+不是正式发布版。
 
 镜像由已验证可启动的 A733 基础镜像复制后，仅替换第 3 分区中的 openvela 内核；
 基础镜像不会被修改。可重复命令见 `docs/BUILD_AND_IMAGE.md`。

@@ -86,7 +86,8 @@ bash contest2026_274_Dogking/tools/verify-a733-image.sh \
 - `.img`、ELF、模型、A7PM、构建日志和本地恢复 bundle 不进入 Git。
 - 可公开分发的最终镜像应上传 GitHub Release，并在 `docs/ARTIFACTS.md` 写明
   来源、大小、SHA-256 和实机验收状态。
-- v115 是当前可恢复的音频/UART 候选镜像；它已完成构建和文件系统校验，但
-  UART4 TTS 与 I2S0 仍等待实机测试，不应标记为正式发布版。
+- v120 是当前最新可恢复候选镜像；它在已通过 UART4 TTS、Wi-Fi、官方 Agent
+  和本地 Qwen 接口的 v119 基线上加入 ST7735/LVGL。v120 已完成构建和镜像校验，
+  但显示硬件仍等待实机测试，不应标记为正式发布版。
 - 烧录会覆盖目标 TF 卡。先备份 `/data/models`、Wi-Fi、SSH/FTP、Agent 密钥
   和私人配置。凭据禁止进入 Git 历史或公开镜像。

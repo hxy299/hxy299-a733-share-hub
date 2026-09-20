@@ -67,7 +67,8 @@ PTK → 安装 GTK → 开放 controlled port → DHCP；并在异步 disconnect
   板级密钥加密持久化；配置成功后 Agent 开机自启动。
 - 实机连续中文对话通过：首次 TLS 请求约 7.5 秒，连接复用后约 1.8 秒。
 - 快速规则、云端优先、失败转本地接口、UTF-8 校验和回复动作/表情白名单已实现。
-- 本地 LLM 回调尚未注册到产品路由；屏幕、舵机、电机和 LED 只保留安全接口，
+- 本地 LLM 已通过线程安全库接口注册到产品路由，支持强制本地请求，以及断网或
+  云端失败后的真实 Qwen 回退；屏幕、舵机、电机和 LED 仍只保留安全接口，
   不宣称硬件动作已经执行。
 
 ## 已验证的本地 Qwen2.5-1.5B 基线
@@ -76,8 +77,18 @@ PTK → 安装 GTK → 开放 controlled port → DHCP；并在异步 disconnect
   28 层 Transformer、LM head、KV cache 和连续生成均已在板端逐阶段验证。
 - 模型可常驻 4 GiB 内存；6 核工作池默认使用 CPU2..7（4×A55 + 2×A76），
   保留 CPU0..1 给系统。缓存命中后单 token 前向检查点约 0.6 秒。
-- 中文流式输出和有限多轮历史已通过现场测试。独立参考精度、长稳、强制中断
-  清理以及桌宠 `LocalRouteBackend` 接入仍待完成。
+- 中文流式输出和有限多轮历史已通过现场测试；桌宠 `LocalRouteBackend` 已接入。
+  独立参考精度、长稳、跨请求持久 KV、采样策略和强制中断清理仍待完成。
+
+## ST7735 与 LVGL 显示候选
+
+- 复用 openvela/NuttX 官方 `drivers/lcd/st7735.c` 和 LVGL NuttX LCD backend；
+  A733 板级代码只负责 SPI1、PL5 D/C、PB0 RESET 与 `/dev/lcd0` 注册。
+- `display status/test/run` 已编译进入 v120，RGB565、SPI Mode 0、12 MHz，目标
+  面板为 128×160 ST7735。
+- v120 已完成全量链接、ELF 符号、ext4/GPT 和内嵌内核回读校验，但尚未取得
+  屏幕点亮、颜色、方向、刷新稳定性和实际帧率的实机证据。
+- 详细接线、哈希和首轮测试见 `docs/ST7735_LVGL_PORT.md`。
 
 ## 音频与语音状态
 

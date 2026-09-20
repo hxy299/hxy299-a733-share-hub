@@ -98,6 +98,9 @@ AI 桌宠的产品层强制采用“openvela 官方能力优先”架构，具�
 [`docs/a733/AIPET_CHAIN_OVERVIEW_20260920.md`](docs/a733/AIPET_CHAIN_OVERVIEW_20260920.md)。
 ST7735 接线、官方驱动边界、构建产物和首轮板测步骤见
 [`docs/ST7735_LVGL_PORT.md`](docs/ST7735_LVGL_PORT.md)。
+后续开发者或 Agent 接手前，请先阅读
+[`docs/PROJECT_HANDOFF_20260920.md`](docs/PROJECT_HANDOFF_20260920.md)，其中包含
+当前恢复点、完整构建/测试流程、失败方案、未完成任务和安全边界。
 
 模板中的 hello app、quickapp 和示例日志已删除。本作品只使用板级适配形态。
 
