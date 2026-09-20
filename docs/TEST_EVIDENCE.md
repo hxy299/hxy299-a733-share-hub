@@ -162,8 +162,28 @@ kernel sha256: d55f12403d7c55a09b9bc395e2514e8dade0a8c2803e1c089322d435e50dd65e
 ```
 
 `e2fsck -fn`、`sgdisk -v` 以及从镜像重新提取内核后的 SHA-256 比较均通过。
-当前仍只标记为候选，必须由 v116 实机得到 `node=present`、
-`stage=complete`、`frame sent (0)` 和实际发声后才能标记 UART 硬件通过。
+v116 实机得到 `node=present`，证明设备注册和 termios 修复有效；发送测试进入
+`stage=parameters` 后返回 `-110`，`frames=0`，说明首个参数字节等待 UART
+FIFO 可写超时。该结果取代“等待 v116 板测”的旧状态。
+
+## UART4 TTS v117 时钟/复位修复候选
+
+v117 保持官方 BSP 的 UART4 基址 `0x02504000`、BGR `CCU+0x0e10` 和
+PJ24/PJ25 function 4，显式把 APB-UART `CCU+0x0538` 设为 24 MHz/1，随后
+依次拉低复位、打开 UART4 门控、释放复位并执行 MMIO 读回/延时。新增只读
+`/dev/a733-uart4`，可报告 APB 时钟、BGR、引脚复用、LCR、LSR 和 USR。
+
+```text
+image:  openvela-a733-cubie-a7z-sd-uart-hw-v117-candidate.img
+bytes:  2147483648
+sha256: 17658c8327cb6e015640212ba5bfdb3222779f8089a332a09bd82dff06fd54fe
+kernel bytes:  1920592
+kernel sha256: 418fe8b6a84479289f29029097414c45cb3b629db73c957cd51f9c27e7b1886d
+```
+
+AArch64 全目标编译/链接、`e2fsck -fn`、`sgdisk -v` 和镜像内核回读哈希均
+通过。仍须实机取得 `thre=1` 或 `tfnf=1`、`stage=complete`、帧计数递增和
+实际发声，才可标记 UART TTS 硬件通过。
 
 ## v67 WEXT/WAPI 构建与镜像校验
 

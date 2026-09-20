@@ -1,6 +1,21 @@
 # A733 AI 桌宠音频阶段：UART4 TTS 与 I2S0
 
-## v116 UART termios 修复候选
+## v117 UART4 硬件初始化修复候选
+
+- 镜像：`openvela-a733-cubie-a7z-sd-uart-hw-v117-candidate.img`
+- 镜像 SHA-256：`17658c8327cb6e015640212ba5bfdb3222779f8089a332a09bd82dff06fd54fe`
+- 内嵌内核 SHA-256：`418fe8b6a84479289f29029097414c45cb3b629db73c957cd51f9c27e7b1886d`
+- 内核大小：`1920592` 字节
+- 构建状态：AArch64 全目标编译/链接、ext4、GPT 与内嵌内核回读校验通过。
+- 实机状态：等待 FIFO 状态和实际发声复测，仍是候选镜像。
+
+v116 已确认 `/dev/ttyS4` 存在，termios 配置不再返回 `-22`；但参数帧首字节
+因 FIFO 始终不可写而超时，状态为 `stage=parameters`、`last=110`、
+`frames=0`。v117 显式配置 APB-UART 24 MHz/1，并采用复位断言 → 门控开启 →
+复位释放的初始化顺序。新增 `/dev/a733-uart4`，用于直接读取 CCU、pinmux、
+LCR、LSR 和 USR，避免继续依赖推测。
+
+## v116 UART termios 修复记录
 
 - 镜像：`openvela-a733-cubie-a7z-sd-uart-termios-v116-candidate.img`
 - 镜像 SHA-256：`e03cb1bc3e9a9795eb2dd45530cba00c1357b4b1980f0097c567fd108bad35f9`
@@ -8,7 +23,7 @@
 - 内核大小：`1920592` 字节
 - 构建状态：AArch64 全目标编译、链接通过；ext4、GPT 与内嵌内核一致性
   校验通过。
-- 实机状态：等待 UART4 发声复测；不能在复测前标记为硬件通过。
+- 实机状态：设备节点与 termios 已通过，FIFO 首字节发送超时；由 v117 继续修复。
 
 v115 实机执行 `aipet tts test` 返回 `-22`。根因是 UART4 的 `TCGETS`
 把 termios 编码常量 `B9600` 错写进了保存数值波特率的 `c_speed`；
@@ -72,13 +87,15 @@ MAX98357A 与 INMP441 可以共用 PB5/PB6 时钟线。
 
 ```text
 ls /dev
+cat /dev/a733-uart4
 aipet tts status
 aipet tts test "串口语音测试成功"
 aipet tts on
 aipet ask "请只回答：语音链路成功"
 ```
 
-预期状态应包含 `node=present`。`aipet tts test` 应显示 `frame sent (0)` 且
+预期诊断应包含 `gate=1 reset=1 functions=4/4`，并且 `thre=1` 或 `tfnf=1`；
+状态应包含 `node=present`。`aipet tts test` 应显示 `frame sent (0)` 且
 模块发声；启用后，
 `aipet ask` 的文字回复仍出现在终端，同时从 UART4 自动播报。如果终端显示
 发送成功但没有声音，先检查模块供电、共地、PJ24 是否接模块 RX，以及模块
@@ -107,5 +124,6 @@ cat /dev/a733-audio
 
 - MAX98357A 尚未输出音频；当前没有切换 I2S 引脚复用。
 - INMP441 尚未采样；当前没有注册 PCM capture 设备。
-- UART4/TTS 的 v115 `-22` 已定位并在 v116 修复；协议测试、路由回归和
-  AArch64 完整链接通过，但仍以 v116 实机发声作为最终验收。
+- UART4/TTS 的 v115 `-22` 已在 v116 修复；v116 的 FIFO `-110` 已在 v117
+  加入时钟/复位修复与寄存器诊断。协议测试、路由回归和 AArch64 完整链接
+  通过，但仍以 v117 实机发声作为最终验收。

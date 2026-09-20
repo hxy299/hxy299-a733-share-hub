@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -35,6 +36,7 @@
 #define A733_PIO_BASE          UINT64_C(0x02000000)
 #define A733_PIO_STRIDE        UINT64_C(0x30)
 #define A733_UART4_BGR         (A733_CCU_BASE + UINT64_C(0x0e10))
+#define A733_APB_UART_CLK      (A733_CCU_BASE + UINT64_C(0x0538))
 #define A733_UART4_BASE        UINT64_C(0x02504000)
 
 #define UART_RBR               0x00
@@ -56,8 +58,78 @@
 #define A733_UART4_CLOCK       24000000u
 #define A733_UART4_BAUD        9600u
 #define A733_UART4_TIMEOUT     MSEC2TICK(1000)
+#define A733_UART4_GATE        (1u << 0)
+#define A733_UART4_RESET       (1u << 16)
+
+#define A733_PJ_CFG3           (A733_PIO_BASE + 9u * A733_PIO_STRIDE + 0x0c)
 
 static mutex_t g_uart4_lock = NXMUTEX_INITIALIZER;
+
+static ssize_t a733_uart4_diag_read(struct file *filep, char *buffer,
+                                    size_t buflen)
+{
+  char report[512];
+  size_t length;
+  size_t offset;
+  size_t copy;
+  uint32_t pjcfg = getreg32(A733_PJ_CFG3);
+  uint32_t bgr = getreg32(A733_UART4_BGR);
+  uint32_t apb = getreg32(A733_APB_UART_CLK);
+  uint32_t lcr = getreg32(A733_UART4_BASE + UART_LCR);
+  uint32_t lsr = getreg32(A733_UART4_BASE + UART_LSR);
+  uint32_t usr = getreg32(A733_UART4_BASE + UART_USR);
+
+  if (buffer == NULL)
+    {
+      return -EINVAL;
+    }
+
+  length = (size_t)snprintf(report, sizeof(report),
+    "A733 UART4 TW-TTS checkpoint\n"
+    "node: /dev/ttyS4 baud=%u format=8N1 polling=1\n"
+    "clock: apb-uart=%08lx source=%lu divider=%lu "
+    "bgr=%08lx gate=%lu reset=%lu\n"
+    "pins: PJ24=TX/function%lu PJ25=RX/function%lu cfg3=%08lx\n"
+    "regs: lcr=%08lx lsr=%08lx thre=%lu usr=%08lx tfnf=%lu\n"
+    "expected: source=0 divider=0 gate=1 reset=1 functions=4/4 "
+    "and thre-or-tfnf=1\n",
+    A733_UART4_BAUD,
+    (unsigned long)apb,
+    (unsigned long)((apb >> 24) & 7u),
+    (unsigned long)(apb & 0x1fu),
+    (unsigned long)bgr,
+    (unsigned long)(bgr & A733_UART4_GATE ? 1 : 0),
+    (unsigned long)(bgr & A733_UART4_RESET ? 1 : 0),
+    (unsigned long)((pjcfg >> 0) & 0xfu),
+    (unsigned long)((pjcfg >> 4) & 0xfu),
+    (unsigned long)pjcfg,
+    (unsigned long)lcr,
+    (unsigned long)lsr,
+    (unsigned long)(lsr & UART_LSR_THRE ? 1 : 0),
+    (unsigned long)usr,
+    (unsigned long)(usr & UART_USR_TFNF ? 1 : 0));
+
+  offset = (size_t)filep->f_pos;
+  if (offset >= length)
+    {
+      return 0;
+    }
+
+  copy = length - offset;
+  if (copy > buflen)
+    {
+      copy = buflen;
+    }
+
+  memcpy(buffer, report + offset, copy);
+  filep->f_pos += (off_t)copy;
+  return (ssize_t)copy;
+}
+
+static const struct file_operations g_uart4_diag_fops =
+{
+  .read = a733_uart4_diag_read,
+};
 
 static void a733_pinmux(unsigned int bank, unsigned int pin,
                         unsigned int function)
@@ -205,14 +277,36 @@ int a733_uart4_initialize(void)
 {
   uint32_t divisor = A733_UART4_CLOCK / (16u * A733_UART4_BAUD);
   uint32_t value;
+  int ret;
 
   /* PJ24=TX, PJ25=RX, mux function 4. */
 
   a733_pinmux(9, 24, 4);
   a733_pinmux(9, 25, 4);
 
+  /* The UART leaf gate is fed from the separate APB-UART clock.  Select the
+   * 24 MHz oscillator with divide-by-one explicitly instead of depending on
+   * the bootloader's clock-tree residue.  Then assert reset, enable the leaf
+   * gate and only afterwards release reset.  Readbacks and short delays are
+   * intentional MMIO ordering points; enabling gate and reset in one write
+   * left the DesignWare FIFO status permanently at zero on the first board
+   * test.
+   */
+
+  value = getreg32(A733_APB_UART_CLK);
+  value &= ~((7u << 24) | 0x1fu);
+  putreg32(value, A733_APB_UART_CLK);
+  (void)getreg32(A733_APB_UART_CLK);
+
   value = getreg32(A733_UART4_BGR);
-  putreg32(value | (1u << 16) | 1u, A733_UART4_BGR);
+  putreg32((value | A733_UART4_GATE) & ~A733_UART4_RESET,
+           A733_UART4_BGR);
+  (void)getreg32(A733_UART4_BGR);
+  up_udelay(10);
+
+  putreg32(value | A733_UART4_GATE | A733_UART4_RESET, A733_UART4_BGR);
+  (void)getreg32(A733_UART4_BGR);
+  up_udelay(10);
 
   putreg32(0, A733_UART4_BASE + UART_IER);
   putreg32(UART_LCR_DLAB | 3u, A733_UART4_BASE + UART_LCR);
@@ -222,7 +316,18 @@ int a733_uart4_initialize(void)
   putreg32(7u, A733_UART4_BASE + UART_FCR); /* enable/reset both FIFOs */
   putreg32(0, A733_UART4_BASE + UART_MCR);
 
-  return register_driver("/dev/ttyS4", &g_uart4_fops, 0666, NULL);
+  ret = register_driver("/dev/ttyS4", &g_uart4_fops, 0666, NULL);
+  if (ret < 0)
+    {
+      return ret;
+    }
+
+  /* Keep a read-only hardware snapshot separate from the byte-stream node so
+   * field diagnostics never consume received UART data.
+   */
+
+  ret = register_driver("/dev/a733-uart4", &g_uart4_diag_fops, 0444, NULL);
+  return ret < 0 ? ret : OK;
 }
 
 #endif
