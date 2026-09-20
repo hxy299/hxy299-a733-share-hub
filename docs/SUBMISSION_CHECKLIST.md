@@ -132,13 +132,31 @@ python3 ../.claude/skills/contest-log-collector/tools/validate-log.py logs/
 
 | 序号 | 材料 | 状态 | 位置 |
 | --- | --- | --- | --- |
-| 1 | 技术报告（.pdf / .docx） | ✅ 已撰写，待导出 | `docs/SUBMISSION_TECHNICAL_REPORT.md` |
-| 2 | 演示视频（≤5 分钟） | ⬜ 待录制 | — |
-| 3 | 作品展示照片 | ⬜ 待拍摄 | 建议前/后/侧/俯 + 屏幕特写 |
+| 1 | 技术报告（.pdf / .docx） | ✅ 已生成 DOCX | `docs/SUBMISSION_TECHNICAL_REPORT.docx`（源：同名 `.md`） |
+| 2 | 演示视频（≤5 分钟） | ⬜ 待录制（仅本人可完成） | — |
+| 3 | 作品展示照片 | ⬜ 待拍摄（仅本人可完成） | 建议前/后/侧/俯 + 屏幕特写 |
 | 4 | 海报 | ⬜ 可选 | 入围决赛 / 线下展示时提交 |
 | 5 | 答辩 PPT | ⬜ 可选 | 入围决赛时提交 |
 
 命名示例：`Dogking-DogkingA733-contest2026_274_Dogking.zip`
+
+### 技术报告导出说明
+
+模板接受 `.pdf` 或 `.docx`。仓库以 Markdown 维护正文，导出的 DOCX 是派生产物：
+
+```bash
+mkdir -p /tmp/md2docx && cd /tmp/md2docx
+npm init -y && npm install markdown-docx
+node <仓库>/tools/docx/md2docx.mjs \
+  <仓库>/docs/SUBMISSION_TECHNICAL_REPORT.md \
+  <仓库>/docs/SUBMISSION_TECHNICAL_REPORT.docx
+```
+
+已核验导出结果：13 个章节标题全部存在、25 个表格（177 行）、827 个段落、
+39370 字节。**建议再用 Word「另存为 PDF」补一份 PDF**，评委端排版更可控。
+
+> 注意：DOCX 与 Markdown 都应提交。DOCX 是评委直接看的版本，Markdown 是
+> 可 diff、可审查的源。修改内容请改 `.md` 后重新导出，不要直接编辑 `.docx`。
 
 ## 推送前机械检查
 

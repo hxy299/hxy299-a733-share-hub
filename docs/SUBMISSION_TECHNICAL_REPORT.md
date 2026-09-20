@@ -747,13 +747,13 @@ P3  BT/GPU/UFS、Wi-Fi 长稳与 DFS 压测、生产级 DVFS 与掉电一致性
 
 | 序号 | 材料 | 状态 | 位置 / 说明 |
 | --- | --- | --- | --- |
-| 1 | 技术报告 | ✅ 本文 | `docs/SUBMISSION_TECHNICAL_REPORT.md`（需导出为 PDF/DOCX） |
+| 1 | 技术报告 | ✅ 已生成 | `docs/SUBMISSION_TECHNICAL_REPORT.docx`（源：同名 `.md`） |
 | 2 | 演示视频（≤5 分钟） | ⬜ 待录制 | 需含功能演示、交互操作、AI 能力展示 |
 | 3 | 作品展示照片 | ⬜ 待拍摄 | 建议前/后/侧/俯四个角度 + 屏幕显示特写 |
 | 4 | 海报 | ⬜ 可选 | 入围决赛 / 线下展示时需提交 |
 | 5 | 答辩 PPT | ⬜ 可选 | 入围决赛时提交 |
-| — | 项目源码 | ✅ 已入仓 | `contest2026_274_Dogking` 仓 |
-| — | AI Coding 日志 | ✅ 已入仓 | `logs/hxy299/`（107 会话，官方校验器 ALL OK） |
+| — | 项目源码 | ✅ 已入仓 | `contest2026_274_Dogking` 仓（554 个 tracked 文件） |
+| — | AI Coding 日志 | ✅ 已入仓 | `logs/hxy299/`（107 会话 / 23,933 事件，官方校验器 ALL OK） |
 
 ## 附录 C：关键实测数据速查
 
