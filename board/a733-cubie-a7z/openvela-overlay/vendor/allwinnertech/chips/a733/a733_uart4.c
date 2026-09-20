@@ -169,8 +169,14 @@ static int a733_uart4_ioctl(struct file *filep, int cmd,
         }
 
       memset(termiosp, 0, sizeof(*termiosp));
-      termiosp->c_cflag = CS8 | CREAD | CLOCAL;
-      termiosp->c_speed = B9600;
+      /* NuttX keeps the encoded baud selector in c_cflag and the numeric
+       * baud rate in c_speed.  B9600 is an encoded selector, not 9600.
+       * Mixing the two made cfsetospeed() turn c_speed into 9600 and the
+       * following TCSETS comparison reject it with EINVAL.
+       */
+
+      termiosp->c_cflag = CS8 | CREAD | CLOCAL | B9600;
+      termiosp->c_speed = A733_UART4_BAUD;
       return OK;
     }
 
@@ -181,7 +187,7 @@ static int a733_uart4_ioctl(struct file *filep, int cmd,
           return -EINVAL;
         }
 
-      return cfgetospeed(termiosp) == B9600 ? OK : -EINVAL;
+      return cfgetospeed(termiosp) == A733_UART4_BAUD ? OK : -EINVAL;
     }
 
   return -ENOTTY;

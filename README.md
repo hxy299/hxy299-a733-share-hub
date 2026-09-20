@@ -42,7 +42,7 @@ YOLOv8n 六输出和动态输入均已通过真机验证，而不是固定输出
 | NPU | 完成基线 | VIP2 ABI、MMU/DMA/IRQ，LeNet/YOLOv5/YOLOv8 真机运行 |
 | 官方 AI Agent | 联网对话实机通过 | `packages_ai_agent`、DeepSeek/MiMo、API Key 板级加密、自动启动和连续中文对话 |
 | AI 桌宠路由 | 文字主链路完成 | 快速规则、官方 Agent、回复/表情/动作解析；本地 LLM 注册和硬件表现层待接入 |
-| UART4 TTS | 已构建待板测 | `/dev/ttyS4`、TW-TTS UTF-8、自动播报和故障隔离 |
+| UART4 TTS | v116 修复待板测 | `/dev/ttyS4`、TW-TTS UTF-8、自动播报、termios 修复和分阶段诊断 |
 | I2S 音频 | 诊断阶段 | MAX98357A/INMP441 引脚与时钟诊断已加入，尚无 PCM lower-half |
 | UVC 摄像头 | 进行中 | Type-C/PHY/xHCI 检查点完成，设备枚举尚未完成 |
 | Bluetooth/GPU/UFS | 待完成 | 不计入当前完成项 |

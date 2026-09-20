@@ -81,8 +81,10 @@ PTK → 安装 GTK → 开放 controlled port → DHCP；并在异步 disconnect
 
 ## 音频与语音状态
 
-- UART4 `/dev/ttyS4`、PJ24/PJ25、9600 8N1 和 TW-TTS UTF-8 帧已完成代码、
-  主机协议测试和 v115 完整镜像构建，等待实机发声验证。
+- UART4 `/dev/ttyS4`、PJ24/PJ25、9600 8N1 和 TW-TTS UTF-8 帧已完成。
+  v115 实机暴露的 termios `B9600`/数值波特率混用导致 `-22`，已在 v116
+  修复；主机协议/路由测试、AArch64 完整构建和镜像校验通过，等待 v116
+  实机发声验证。
 - I2S0 的 MAX98357A/INMP441 引脚与时钟资源已确认，`/dev/a733-audio` 只做
   非破坏诊断；尚未注册 openvela PCM lower-half，也没有播放/采集数据流。
 - 官方云端 ASR 接口和本地 ASR 骨架已经调研/保留，但没有真实麦克风 PCM 输入，

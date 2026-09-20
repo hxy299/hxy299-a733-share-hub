@@ -19,6 +19,7 @@ struct TtsStatus
   unsigned failures = 0;
   int last_errno = 0;
   bool initialized = false;
+  const char *stage = "idle";
 };
 
 /* Caller owns one instance and serializes access. Device is explicitly
@@ -28,7 +29,7 @@ class UartTts
 public:
   explicit UartTts(std::string device) : device_(std::move(device)) {}
   bool speak_utf8(const std::string &text, int volume, int speed, int tone);
-  void reset() { status_.initialized = false; }
+  void reset() { status_.initialized = false; status_.stage = "idle"; }
   const TtsStatus &status() const { return status_; }
 private:
   bool write_frame(int fd, const std::vector<std::uint8_t> &frame);

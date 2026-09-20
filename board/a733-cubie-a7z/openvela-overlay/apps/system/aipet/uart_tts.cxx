@@ -54,14 +54,17 @@ bool UartTts::write_frame(int fd, const std::vector<std::uint8_t> &frame)
 
 bool UartTts::speak_utf8(const std::string &text, int volume, int speed, int tone)
 {
+  status_.stage = "validate";
   std::vector<std::uint8_t> speech;
   if (!tts_text_frame(text, 0x04, speech) ||
       device_.compare(0, 5, "/dev/") != 0 ||
       device_ == "/dev/console" || device_ == "/dev/ttyS0" ||
       device_.find("..") != std::string::npos)
     { ++status_.failures; status_.last_errno = EINVAL; return false; }
+  status_.stage = "open";
   const int fd = open(device_.c_str(), O_WRONLY | O_NOCTTY | O_NONBLOCK);
   if (fd < 0) { ++status_.failures; status_.last_errno = errno; return false; }
+  status_.stage = "termios";
   termios saved{}, configured{};
   bool have_saved = tcgetattr(fd, &saved) == 0;
   bool ok = have_saved;
@@ -77,6 +80,7 @@ bool UartTts::speak_utf8(const std::string &text, int volume, int speed, int ton
     }
   if (ok && !status_.initialized)
     {
+      status_.stage = "parameters";
       const char names[] = {'v', 's', 't'};
       const int levels[] = {volume, speed, tone};
       for (unsigned i = 0; i < 3 && ok; ++i)
@@ -87,13 +91,18 @@ bool UartTts::speak_utf8(const std::string &text, int volume, int speed, int ton
         }
       status_.initialized = ok;
     }
-  if (ok) ok = write_frame(fd, speech);
+  if (ok)
+    {
+      status_.stage = "text";
+      ok = write_frame(fd, speech);
+    }
   const int failure = ok ? 0 : errno;
   /* Restoring immediately could change baud while data is still queued.
    * Keep the explicitly dedicated TTS port configured; do not touch console. */
   close(fd);
   status_.last_errno = failure;
   if (!ok) { ++status_.failures; status_.initialized = false; }
+  else status_.stage = "complete";
   return ok;
 }
 }

@@ -1,12 +1,30 @@
 # A733 AI 桌宠音频阶段：UART4 TTS 与 I2S0
 
-## v115 构建产物
+## v116 UART termios 修复候选
+
+- 镜像：`openvela-a733-cubie-a7z-sd-uart-termios-v116-candidate.img`
+- 镜像 SHA-256：`e03cb1bc3e9a9795eb2dd45530cba00c1357b4b1980f0097c567fd108bad35f9`
+- 内嵌内核 SHA-256：`d55f12403d7c55a09b9bc395e2514e8dade0a8c2803e1c089322d435e50dd65e`
+- 内核大小：`1920592` 字节
+- 构建状态：AArch64 全目标编译、链接通过；ext4、GPT 与内嵌内核一致性
+  校验通过。
+- 实机状态：等待 UART4 发声复测；不能在复测前标记为硬件通过。
+
+v115 实机执行 `aipet tts test` 返回 `-22`。根因是 UART4 的 `TCGETS`
+把 termios 编码常量 `B9600` 错写进了保存数值波特率的 `c_speed`；
+`cfsetospeed()` 将其规范化为数值 `9600` 后，`TCSETS` 又拿它和编码常量
+比较，必然返回 `EINVAL`。v116 改为 `c_cflag` 保存 `B9600` 编码、
+`c_speed` 保存数值 `9600`，并在 `aipet tts status` 增加 `node` 与 `stage`
+诊断字段。
+
+## v115 构建产物与失败记录
 
 - 镜像：`openvela-a733-cubie-a7z-sd-audio-uart-v115-candidate.img`
 - 镜像 SHA-256：`cf25ac887087e5bbad1863258225d2060c3c875706b84686d1ef8cdc6b01c834`
 - 内嵌内核 SHA-256：`2d3af39ada75f72e42f127867637c2643142ec2d949c0117b1c62d8d5df80d08`
 - 构建状态：完整交叉构建通过；ext4、GPT 和内嵌内核一致性检查通过。
-- 实机状态：等待 UART4 发声和 I2S0 只读寄存器输出验证。
+- 实机状态：系统、Agent 和 I2S0 只读诊断正常；UART TTS 在 termios 配置
+  阶段返回 `EINVAL(-22)`，已由 v116 修复，v115 不再用于 UART 验收。
 
 ## 当前完成范围
 
@@ -25,8 +43,8 @@
 
 UART TTS（优先验证）：
 
-- A7Z PJ24 / UART4-TX -> TTS 模块 RX
-- A7Z PJ25 / UART4-RX <- TTS 模块 TX（模块不返回数据时可不接）
+- A7Z 物理 Pin 16 / PJ24 / UART4-TX -> TTS 模块 RX
+- A7Z 物理 Pin 18 / PJ25 / UART4-RX <- TTS 模块 TX（模块不返回数据时可不接）
 - A7Z GND <-> TTS 模块 GND
 - 供电按模块铭牌要求；不得仅凭信号电平猜测电源电压
 
@@ -53,14 +71,15 @@ MAX98357A 与 INMP441 可以共用 PB5/PB6 时钟线。
 先断电接线，只接 UART TTS，启动后执行：
 
 ```text
-ls -l /dev/ttyS4 /dev/a733-audio
+ls /dev
 aipet tts status
 aipet tts test "串口语音测试成功"
 aipet tts on
 aipet ask "请只回答：语音链路成功"
 ```
 
-预期结果：`aipet tts test` 显示 `frame sent (0)` 且模块发声；启用后，
+预期状态应包含 `node=present`。`aipet tts test` 应显示 `frame sent (0)` 且
+模块发声；启用后，
 `aipet ask` 的文字回复仍出现在终端，同时从 UART4 自动播报。如果终端显示
 发送成功但没有声音，先检查模块供电、共地、PJ24 是否接模块 RX，以及模块
 是否兼容 `FD + 长度 + 01 + 04(UTF-8) + 文本` 协议。
@@ -88,4 +107,5 @@ cat /dev/a733-audio
 
 - MAX98357A 尚未输出音频；当前没有切换 I2S 引脚复用。
 - INMP441 尚未采样；当前没有注册 PCM capture 设备。
-- UART4/TTS 已完成代码与主机协议测试，但仍以实机发声作为最终验收。
+- UART4/TTS 的 v115 `-22` 已定位并在 v116 修复；协议测试、路由回归和
+  AArch64 完整链接通过，但仍以 v116 实机发声作为最终验收。

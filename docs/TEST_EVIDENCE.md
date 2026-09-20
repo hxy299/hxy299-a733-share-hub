@@ -141,6 +141,30 @@ Qwen2.5-1.5B Q4_K_M 模型完成 tokenizer、28 层前向、KV cache 和连续�
 I2S0 诊断进入 v115 候选镜像，但因没有开发板尚无实际发声/时钟日志，不能列为
 硬件通过。
 
+## UART4 TTS v115 失败与 v116 修复
+
+v115 实机确认 `/dev/a733-audio` 可读取、官方 Agent 云端对话成功，但
+`aipet tts test` 和 Agent 自动播报均返回 `-22`，且发送帧计数保持为零。
+这证明错误发生在 UART 帧发送之前。源码复核确认 NuttX termios 的 `B9600`
+是 `c_cflag` 中的编码选择值，而 `c_speed` 保存数值波特率；原驱动混用了
+两者，使 `TCSETS` 稳定返回 `EINVAL`。
+
+v116 已修正该 ABI 使用方式，并增加 `node=present|missing` 与
+`stage=validate|open|termios|parameters|text|complete` 诊断。主机 TW-TTS 协议
+测试、桌宠完整路由测试和 AArch64 全目标构建均通过。候选镜像校验如下：
+
+```text
+image:  openvela-a733-cubie-a7z-sd-uart-termios-v116-candidate.img
+bytes:  2147483648
+sha256: e03cb1bc3e9a9795eb2dd45530cba00c1357b4b1980f0097c567fd108bad35f9
+kernel bytes:  1920592
+kernel sha256: d55f12403d7c55a09b9bc395e2514e8dade0a8c2803e1c089322d435e50dd65e
+```
+
+`e2fsck -fn`、`sgdisk -v` 以及从镜像重新提取内核后的 SHA-256 比较均通过。
+当前仍只标记为候选，必须由 v116 实机得到 `node=present`、
+`stage=complete`、`frame sent (0)` 和实际发声后才能标记 UART 硬件通过。
+
 ## v67 WEXT/WAPI 构建与镜像校验
 
 2026-09-14 完成全量构建和两次增量构建，以下目标均编译并链接成功：

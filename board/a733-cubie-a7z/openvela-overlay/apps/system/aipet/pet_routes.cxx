@@ -183,9 +183,10 @@ int uart_tts_control(const char *command,const char *text)
   if (!command || !strcmp(command,"status")) {
     const auto &s=uart_tts.status();
     printf("uart-tts: %s device=/dev/ttyS4 baud=9600 encoding=utf8 "
-           "initialized=%d frames=%u failures=%u last=%d\n",
-           access(uart_tts_marker,F_OK)==0?"on":"off",s.initialized,
-           s.frames,s.failures,s.last_errno);
+           "node=%s initialized=%d frames=%u failures=%u last=%d stage=%s\n",
+           access(uart_tts_marker,F_OK)==0?"on":"off",
+           access("/dev/ttyS4",F_OK)==0?"present":"missing",s.initialized,
+           s.frames,s.failures,s.last_errno,s.stage);
     return 0;
   }
   if (!strcmp(command,"on")) {
