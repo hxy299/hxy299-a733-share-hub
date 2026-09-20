@@ -37,6 +37,7 @@
 #define A733_CCU_BASE          UINT64_C(0x02001000)
 #define A733_PIO_BASE          UINT64_C(0x02000000)
 #define A733_PIO_STRIDE        UINT64_C(0x30)
+#define A733_R_PIO_BASE        UINT64_C(0x07025000)
 
 static void a733_pinmux(unsigned int bank, unsigned int pin,
                         unsigned int function, unsigned int pull)
@@ -63,6 +64,34 @@ static void a733_pinmux(unsigned int bank, unsigned int pin,
   value = getreg32(pul);
   value = (value & ~(3u << pulshift)) | (pull << pulshift);
   putreg32(value, pul);
+}
+
+static void a733_gpio_write(uintptr_t base, unsigned int pin, bool high)
+{
+  uint32_t value = getreg32(base + 0x10);
+
+  if (high)
+    {
+      value |= 1u << pin;
+    }
+  else
+    {
+      value &= ~(1u << pin);
+    }
+
+  putreg32(value, base + 0x10);
+}
+
+static void a733_gpio_output(uintptr_t base, unsigned int pin, bool high)
+{
+  uintptr_t cfg = base + (pin / 8) * 4;
+  unsigned int shift = (pin % 8) * 4;
+  uint32_t value;
+
+  a733_gpio_write(base, pin, high);
+  value = getreg32(cfg);
+  value = (value & ~(0xfu << shift)) | (1u << shift);
+  putreg32(value, cfg);
 }
 
 #ifdef CONFIG_A733_HEADER_I2C
@@ -413,6 +442,9 @@ struct a733_spi_s
   uint8_t nbits;
 };
 
+static bool g_a733_spi_ready;
+static bool g_a733_spi_registered;
+
 static int a733_spi_lock(struct spi_dev_s *dev, bool lock)
 {
   struct a733_spi_s *priv = (struct a733_spi_s *)dev;
@@ -489,7 +521,7 @@ static void a733_spi_setmode(struct spi_dev_s *dev, enum spi_mode_e mode)
 static void a733_spi_setbits(struct spi_dev_s *dev, int nbits)
 {
   struct a733_spi_s *priv = (struct a733_spi_s *)dev;
-  priv->nbits = nbits == 8 ? 8 : 8;
+  priv->nbits = nbits == 16 ? 16 : 8;
 }
 
 static uint8_t a733_spi_status(struct spi_dev_s *dev, uint32_t devid)
@@ -497,15 +529,31 @@ static uint8_t a733_spi_status(struct spi_dev_s *dev, uint32_t devid)
   return SPI_STATUS_PRESENT;
 }
 
-static void a733_spi_exchange(struct spi_dev_s *dev, const void *txbuffer,
-                              void *rxbuffer, size_t nwords)
+#ifdef CONFIG_SPI_CMDDATA
+static int a733_spi_cmddata(struct spi_dev_s *dev, uint32_t devid, bool cmd)
 {
-  const uint8_t *tx = txbuffer;
-  uint8_t *rx = rxbuffer;
+  (void)dev;
 
-  while (nwords > 0)
+  if (devid != SPIDEV_DISPLAY(0))
     {
-      size_t chunk = nwords > 63 ? 63 : nwords;
+      return -ENODEV;
+    }
+
+  /* Cubie A7Z pin 22 is PL5 in the R_PIO domain.  ST7735 D/C is low for
+   * commands and high for display data.
+   */
+
+  a733_gpio_write(A733_R_PIO_BASE, 5, !cmd);
+  return OK;
+}
+#endif
+
+static void a733_spi_transfer_bytes(const uint8_t *tx, uint8_t *rx,
+                                    size_t nbytes)
+{
+  while (nbytes > 0)
+    {
+      size_t chunk = nbytes > 63 ? 63 : nbytes;
       clock_t start;
       size_t i;
 
@@ -553,16 +601,79 @@ static void a733_spi_exchange(struct spi_dev_s *dev, const void *txbuffer,
           rx += chunk;
         }
 
-      nwords -= chunk;
+      nbytes -= chunk;
+    }
+}
+
+static void a733_spi_exchange(struct spi_dev_s *dev, const void *txbuffer,
+                              void *rxbuffer, size_t nwords)
+{
+  struct a733_spi_s *priv = (struct a733_spi_s *)dev;
+
+  if (priv->nbits == 16)
+    {
+      const uint16_t *tx = txbuffer;
+      uint16_t *rx = rxbuffer;
+      uint8_t txbytes[62];
+      uint8_t rxbytes[62];
+
+      while (nwords > 0)
+        {
+          size_t chunk = nwords > 31 ? 31 : nwords;
+          size_t i;
+
+          for (i = 0; i < chunk; i++)
+            {
+              uint16_t word = tx != NULL ? tx[i] : 0xffff;
+              txbytes[2 * i] = word >> 8;
+              txbytes[2 * i + 1] = word & 0xff;
+            }
+
+          a733_spi_transfer_bytes(txbytes, rx != NULL ? rxbytes : NULL,
+                                  chunk * 2);
+          if (rx != NULL)
+            {
+              for (i = 0; i < chunk; i++)
+                {
+                  rx[i] = ((uint16_t)rxbytes[2 * i] << 8) |
+                          rxbytes[2 * i + 1];
+                }
+
+              rx += chunk;
+            }
+
+          if (tx != NULL)
+            {
+              tx += chunk;
+            }
+
+          nwords -= chunk;
+        }
+    }
+  else
+    {
+      a733_spi_transfer_bytes(txbuffer, rxbuffer, nwords);
     }
 }
 
 static uint32_t a733_spi_send(struct spi_dev_s *dev, uint32_t word)
 {
-  uint8_t tx = word;
-  uint8_t rx = 0xff;
-  a733_spi_exchange(dev, &tx, &rx, 1);
-  return rx;
+  struct a733_spi_s *priv = (struct a733_spi_s *)dev;
+
+  if (priv->nbits == 16)
+    {
+      uint16_t tx = word;
+      uint16_t rx = 0xffff;
+      a733_spi_exchange(dev, &tx, &rx, 1);
+      return rx;
+    }
+  else
+    {
+      uint8_t tx = word;
+      uint8_t rx = 0xff;
+      a733_spi_exchange(dev, &tx, &rx, 1);
+      return rx;
+    }
 }
 
 static const struct spi_ops_s g_a733_spi_ops =
@@ -573,6 +684,9 @@ static const struct spi_ops_s g_a733_spi_ops =
   .setmode = a733_spi_setmode,
   .setbits = a733_spi_setbits,
   .status = a733_spi_status,
+#ifdef CONFIG_SPI_CMDDATA
+  .cmddata = a733_spi_cmddata,
+#endif
   .send = a733_spi_send,
 #ifdef CONFIG_SPI_EXCHANGE
   .exchange = a733_spi_exchange,
@@ -592,9 +706,19 @@ static struct a733_spi_s g_a733_spi1 =
   .nbits = 8,
 };
 
-static int a733_spi_initialize(void)
+struct spi_dev_s *a733_spibus_initialize(int bus)
 {
   unsigned int pin;
+
+  if (bus != 1)
+    {
+      return NULL;
+    }
+
+  if (g_a733_spi_ready)
+    {
+      return &g_a733_spi1.dev;
+    }
 
   for (pin = 10; pin <= 13; pin++)
     {
@@ -610,7 +734,39 @@ static int a733_spi_initialize(void)
   putreg32(SPI_TCR_SPOL | SPI_TCR_SS_OWNER | SPI_TCR_SS_LEVEL,
            A733_SPI1_BASE + SPI_TCR);
   a733_spi_setfrequency(&g_a733_spi1.dev, 1000000);
-  return spi_register(&g_a733_spi1.dev, 1);
+
+#ifdef CONFIG_BOARD_A7Z_ST7735
+  /* Leave D/C in data mode before the generic ST7735 driver takes over. */
+
+  a733_gpio_output(A733_R_PIO_BASE, 5, true);
+#endif
+
+  g_a733_spi_ready = true;
+  return &g_a733_spi1.dev;
+}
+
+static int a733_spi_register(void)
+{
+  struct spi_dev_s *spi = a733_spibus_initialize(1);
+  int ret;
+
+  if (spi == NULL)
+    {
+      return -ENODEV;
+    }
+
+  if (g_a733_spi_registered)
+    {
+      return OK;
+    }
+
+  ret = spi_register(spi, 1);
+  if (ret >= 0)
+    {
+      g_a733_spi_registered = true;
+    }
+
+  return ret;
 }
 #endif /* CONFIG_A733_HEADER_SPI */
 
@@ -728,7 +884,7 @@ int a733_header_peripherals_initialize(void)
 #endif
 
 #ifdef CONFIG_A733_HEADER_SPI
-  ret = a733_spi_initialize();
+  ret = a733_spi_register();
   if (ret < 0)
     {
       if (first == OK)

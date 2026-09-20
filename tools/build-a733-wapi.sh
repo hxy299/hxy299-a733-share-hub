@@ -42,20 +42,28 @@ files=(
   vendor/allwinnertech/chips/a733/a733_combo0_usb_tables.inc
   vendor/allwinnertech/chips/a733/a733_uart4.c
   vendor/allwinnertech/chips/a733/a733_i2s0_audio.c
+  vendor/allwinnertech/chips/a733/a733_header_peripherals.c
   vendor/allwinnertech/chips/a733/CMakeLists.txt
   vendor/allwinnertech/chips/a733/Kconfig
   vendor/allwinnertech/chips/a733/include/chip.h
   vendor/allwinnertech/chips/a733/include/irq.h
   vendor/allwinnertech/chips/a733/include/a733_peripherals.h
   vendor/allwinnertech/boards/a733/cubie-a7z/configs/nsh/defconfig
+  vendor/allwinnertech/boards/a733/cubie-a7z/Kconfig
+  vendor/allwinnertech/boards/a733/cubie-a7z/src/CMakeLists.txt
   vendor/allwinnertech/boards/a733/cubie-a7z/src/a7z_boardinit.c
+  vendor/allwinnertech/boards/a733/cubie-a7z/src/a7z_st7735.c
   apps/system/a733wifi/a733wifi_main.c
   apps/system/a733wifi/Kconfig
   apps/system/a733services/a733services_main.c
   apps/system/a733services/services_config.c
+  apps/system/a733display/CMakeLists.txt
+  apps/system/a733display/Kconfig
+  apps/system/a733display/a733display_main.c
 )
 patched_files=(
   nuttx/arch/arm64/include/arch.h
+  nuttx/drivers/lcd/st7735.c
   packages/ai_agent/src/agent_main.c
   packages/ai_agent/CMakeLists.txt
   packages/ai_agent/src/infra/vela_tls.c
@@ -144,6 +152,8 @@ done
 
 patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
   < "$team_dir/patches/nuttx-arm64-a733-aff1-cpuid.patch"
+patch --forward --batch --no-backup-if-mismatch -p1 -d "$official" \
+  < "$team_dir/patches/nuttx-st7735-werror.patch"
 
 if same_path "$aipet_overlay" "$aipet_official"; then
   aipet_saved=false
@@ -218,4 +228,15 @@ expected_ncpus=$(sed -n 's/^CONFIG_SMP_NCPUS=//p' \
 [[ "$expected_ncpus" =~ ^[2-8]$ ]]
 grep -qx "CONFIG_SMP_NCPUS=$expected_ncpus" "$build/.config"
 grep -qx 'CONFIG_ARCH_HAVE_MULTICPU=y' "$build/.config"
+for display_config in \
+  CONFIG_BOARD_A7Z_ST7735=y \
+  CONFIG_SPI_CMDDATA=y \
+  CONFIG_LCD_ST7735=y \
+  CONFIG_LCD_ST7735_GM11=y \
+  CONFIG_GRAPHICS_LVGL=y \
+  CONFIG_LV_USE_NUTTX_LCD=y \
+  CONFIG_SYSTEM_A733DISPLAY=y
+do
+  grep -qx "$display_config" "$build/.config"
+done
 sha256sum "$build/nuttx.bin"

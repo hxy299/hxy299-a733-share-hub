@@ -14,4 +14,8 @@ if(CONFIG_BOARD_A7Z_STORAGE)
   list(APPEND SRCS a7z_storage.c)
 endif()
 
+if(CONFIG_BOARD_A7Z_ST7735)
+  list(APPEND SRCS a7z_st7735.c)
+endif()
+
 target_sources(board PRIVATE ${SRCS})

@@ -44,6 +44,7 @@ YOLOv8n 六输出和动态输入均已通过真机验证，而不是固定输出
 | AI 桌宠路由 | 混合文字链路完成 | 快速规则、官方 Agent、本地 Qwen 回退、回复/表情/动作解析和 UART4 播报 |
 | UART4 TTS | v118 实机通过 | `/dev/ttyS4`、TW-TTS UTF-8、sun60iw2 CCU/pinctrl、FIFO 发送和重复播报均通过 |
 | I2S 音频 | 诊断阶段 | MAX98357A/INMP441 引脚与时钟诊断已加入，尚无 PCM lower-half |
+| ST7735/LVGL | v120 编译与镜像完成，待实机 | 官方 ST7735 驱动、`/dev/lcd0`、官方 LVGL NuttX LCD backend 和 `display` 测试应用 |
 | UVC 摄像头 | 进行中 | Type-C/PHY/xHCI 检查点完成，设备枚举尚未完成 |
 | Bluetooth/GPU/UFS | 待完成 | 不计入当前完成项 |
 
@@ -73,6 +74,7 @@ contest2026_274_Dogking/
 │   │   ├── apps/system/aipet/                       # 官方 Agent 桌宠路由
 │   │   ├── apps/system/aipetllm/                    # 本地 Qwen2.5 推理
 │   │   ├── apps/system/aipetasr/                    # 本地 ASR 接口骨架
+│   │   ├── apps/system/a733display/                 # ST7735/LVGL 测试与 UI 入口
 │   │   └── apps、nuttx 的必要兼容文件                # 逐文件 manifest 映射
 │   └── README.md                                    # 板级说明
 ├── docs/
@@ -94,6 +96,8 @@ AI 桌宠的产品层强制采用“openvela 官方能力优先”架构，具�
 [`docs/AI_PET_OPENVELA_FIRST_ARCHITECTURE.md`](docs/AI_PET_OPENVELA_FIRST_ARCHITECTURE.md)。
 当前端到端状态和各分支完成边界见
 [`docs/a733/AIPET_CHAIN_OVERVIEW_20260920.md`](docs/a733/AIPET_CHAIN_OVERVIEW_20260920.md)。
+ST7735 接线、官方驱动边界、构建产物和首轮板测步骤见
+[`docs/ST7735_LVGL_PORT.md`](docs/ST7735_LVGL_PORT.md)。
 
 模板中的 hello app、quickapp 和示例日志已删除。本作品只使用板级适配形态。
 

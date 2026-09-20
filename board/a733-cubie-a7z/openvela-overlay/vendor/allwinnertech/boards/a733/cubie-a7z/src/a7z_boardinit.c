@@ -12,6 +12,10 @@
 #include <syslog.h>
 
 #include <nuttx/fs/fs.h>
+#ifdef CONFIG_BOARD_A7Z_ST7735
+#  include <nuttx/board.h>
+#  include <nuttx/lcd/lcd_dev.h>
+#endif
 
 #include <arch/board/board.h>
 #include <arch/chip/a733_peripherals.h>
@@ -153,6 +157,18 @@ int board_app_initialize(uintptr_t arg)
   syslog(ret < 0 ? LOG_ERR : LOG_INFO,
          "A733: header I2C/SPI and fan PWM %s (%d)\n",
          ret < 0 ? "failed" : "ready", ret);
+#endif
+
+#ifdef CONFIG_BOARD_A7Z_ST7735
+  ret = board_lcd_initialize();
+  if (ret >= 0)
+    {
+      ret = lcddev_register(0);
+    }
+
+  syslog(ret < 0 ? LOG_ERR : LOG_INFO,
+         "A733: ST7735 LCD %s (%d)\n",
+         ret < 0 ? "failed" : "ready at /dev/lcd0", ret);
 #endif
 
 #ifdef CONFIG_A733_SDMMC0

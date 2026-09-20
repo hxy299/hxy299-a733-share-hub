@@ -31,4 +31,18 @@ config BOARD_A7Z_STORAGE
 		the dedicated FAT data partition at /data.  Firmware and boot
 		partitions are never mounted automatically.
 
+config BOARD_A7Z_ST7735
+	bool "Cubie A7Z header ST7735 128x160 LCD"
+	default n
+	depends on ARCH_BOARD_CUSTOM
+	select A733_HEADER_SPI
+	select SPI_CMDDATA
+	select LCD
+	select LCD_DEV
+	select LCD_ST7735
+	---help---
+		Enable the reusable board glue for a four-wire 1.8-inch ST7735
+		display on SPI1.  D/C is PL5 (pin 22), reset is PB0 (pin 7),
+		and the backlight is connected directly to 3.3 V.
+
 endif
