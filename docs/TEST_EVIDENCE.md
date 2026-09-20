@@ -203,8 +203,19 @@ kernel bytes:  1920592
 kernel sha256: aa0ed5b717f136b3fadde2dbdb2abd26928acaec11a83261e944b558dd731356
 ```
 
-AArch64 完整链接、ext4、GPT 和镜像内核回读哈希均通过；硬件状态仍以 v118
-实机日志为最终依据。
+AArch64 完整链接、ext4、GPT 和镜像内核回读哈希均通过。v118 实机结果：
+
+```text
+bgr=00010001 gate=1 reset=1
+PJ24=TX/function4 PJ25=RX/function4 cfg3=0000ff44
+lcr=00000003 lsr=00000060 thre=1 usr=00000006 tfnf=1
+uart-tts test: frame sent (0)
+initialized=1 frames=4 failures=0 last=0 stage=complete
+```
+
+`frames=4` 对应首次调用发送的音量、语速、语调三帧和 UTF-8 文本一帧；紧接着
+再次执行相同播报命令也返回 `frame sent (0)`。UART4 时钟、复位、pinmux、
+FIFO、termios 和 TW-TTS 帧发送已完成实机验收。
 
 ## v67 WEXT/WAPI 构建与镜像校验
 

@@ -89,7 +89,10 @@ PTK → 安装 GTK → 开放 controlled port → DHCP；并在异步 disconnect
   `/dev/a733-uart4` 寄存器诊断。v117 实机诊断发现 CCU、PIO、UART 全部为零，
   由此确认旧实现仍使用了错误的 CCU 基址和传统 pinctrl 布局。v118 已改为
   官方 DTS 的 CCU `0x02002000`，并采用 sun60iw2 HW type 4 的 `0x80` 首 bank、
-  `0x80` bank 步长、`0x20/0x30` 驱动/上下拉偏移；等待实机发声验证。
+  `0x80` bank 步长、`0x20/0x30` 驱动/上下拉偏移。v118 实机确认
+  `bgr=00010001`、PJ24/PJ25 function 4、`LSR=0x60`、`USR=0x06`；TW-TTS
+  初始化三帧和文本帧全部发送成功，`frames=4 failures=0 stage=complete`，随后
+  重复播报继续成功。UART4 TTS 基础链路已通过。
 - I2S0 的 MAX98357A/INMP441 引脚与时钟资源已确认，`/dev/a733-audio` 只做
   非破坏诊断；尚未注册 openvela PCM lower-half，也没有播放/采集数据流。
 - 官方云端 ASR 接口和本地 ASR 骨架已经调研/保留，但没有真实麦克风 PCM 输入，
